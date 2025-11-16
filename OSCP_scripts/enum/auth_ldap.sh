@@ -33,7 +33,7 @@
 #   - Defaults to ldap if no protocol is given.
 #   - All ldapsearch output and errors are shown on console via tee and also written to files.
 
-set -euo pipefail
+set -uo pipefail
 
 if [[ $# -lt 4 ]]; then
   echo "Usage: $0 <IP> <username> <password> <domain> -[ldap|ldaps]"
@@ -98,11 +98,13 @@ awk 'BEGIN{IGNORECASE=1}
 | tee "$OUT_CASCADE" || true
 
 echo "==============================================================="
-echo "[*] Command: nxc ldap ${IP} -u '${USER}' -p '${PASS}' -d '${DOMAIN}' -M laps & -M adcs"
+echo "[*] Command: nxc ldap ${IP} -u '${USER}' -p '${PASS}' -d '${DOMAIN}'--users & -M laps & -M adcs"
 echo "==============================================================="
 
+nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" --users  2>/dev/null 
 nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" -M laps  2>/dev/null 
 nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" -M adcs  2>/dev/null 
+
 
 
 echo "==============================================================="
