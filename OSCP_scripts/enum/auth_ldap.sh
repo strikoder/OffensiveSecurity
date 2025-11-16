@@ -32,6 +32,7 @@
 #   - The script automatically converts <username> into <username>@<domain> for binding.
 #   - Defaults to ldap if no protocol is given.
 #   - All ldapsearch output and errors are shown on console via tee and also written to files.
+#   - Automatically handles LDAPS certificate issues and LDAP signing requirements.
 
 set -uo pipefail
 
@@ -55,10 +56,8 @@ elif [[ "$PROTO" != "ldap" && "$PROTO" != "ldaps" ]]; then
   exit 1
 fi
 
-
 echo "==============================================================="
 echo "[*] Protocol: $PROTO (default is 'ldap', pass 'ldaps' if needed)"
-
 
 BINDUSER="${USER}@${DOMAIN}"
 BASEDN=$(echo "$DOMAIN" | awk -F. '{for(i=1;i<=NF;i++) printf "DC=%s%s",$i,(i<NF?",":""); print ""}')
@@ -75,7 +74,62 @@ OUT_CASCADE="${OUTDIR}/ldap_cascade_pwd.txt"
 echo "==============================================================="
 echo "[*] Running ldapsearch on $URL with $BINDUSER ..."
 echo "==============================================================="
-ldapsearch -LLL -x -H "$URL" -D "$BINDUSER" -w "$PASS" -b "$BASEDN" "(objectClass=user)" | tee "$OUT_MAIN"
+
+# Try ldapsearch with appropriate settings based on protocol
+LDAP_SUCCESS=0
+
+if [[ "$PROTO" == "ldaps" ]]; then
+  echo "[*] Using LDAPS with certificate bypass (LDAPTLS_REQCERT=never)"
+  export LDAPTLS_REQCERT=never
+  if ldapsearch -LLL -x -H "$URL" -D "$BINDUSER" -w "$PASS" -b "$BASEDN" "(objectClass=user)" > "$OUT_MAIN" 2>&1; then
+    LDAP_SUCCESS=1
+    cat "$OUT_MAIN"
+  else
+    echo "[!] LDAPS failed. Error output:"
+    cat "$OUT_MAIN"
+    echo "[*] Attempting fallback to LDAP..."
+    PROTO="ldap"
+    URL="ldap://${IP}"
+  fi
+fi
+
+if [[ "$PROTO" == "ldap" && $LDAP_SUCCESS -eq 0 ]]; then
+  echo "[*] Trying LDAP (plain)..."
+  if ldapsearch -LLL -x -H "$URL" -D "$BINDUSER" -w "$PASS" -b "$BASEDN" "(objectClass=user)" > "$OUT_MAIN" 2>&1; then
+    LDAP_SUCCESS=1
+    cat "$OUT_MAIN"
+  else
+    # Check if error is about signing requirement
+    if grep -q "Strong.*authentication required" "$OUT_MAIN" 2>/dev/null; then
+      echo "[!] LDAP requires signing/integrity checking."
+      echo "[*] Falling back to LDAPS with certificate bypass..."
+      export LDAPTLS_REQCERT=never
+      URL="ldaps://${IP}"
+      if ldapsearch -LLL -x -H "$URL" -D "$BINDUSER" -w "$PASS" -b "$BASEDN" "(objectClass=user)" > "$OUT_MAIN" 2>&1; then
+        LDAP_SUCCESS=1
+        cat "$OUT_MAIN"
+      else
+        echo "[!] LDAPS fallback also failed. Error output:"
+        cat "$OUT_MAIN"
+      fi
+    else
+      echo "[!] LDAP failed with unexpected error:"
+      cat "$OUT_MAIN"
+    fi
+  fi
+fi
+
+if [[ $LDAP_SUCCESS -eq 0 ]]; then
+  echo "==============================================================="
+  echo "[!] All LDAP connection attempts failed!"
+  echo "[!] Check credentials, connectivity, and server configuration."
+  echo "==============================================================="
+  exit 1
+fi
+
+echo "==============================================================="
+echo "[*] LDAP search successful!"
+echo "==============================================================="
 
 echo "==============================================================="
 echo "[*] Grepping 'info:' with context (-B1 -A2)..."
@@ -98,14 +152,17 @@ awk 'BEGIN{IGNORECASE=1}
 | tee "$OUT_CASCADE" || true
 
 echo "==============================================================="
-echo "[*] Command: nxc ldap ${IP} -u '${USER}' -p '${PASS}' -d '${DOMAIN}'--users & -M laps & -M adcs"
+echo "[*] Running NetExec commands..."
 echo "==============================================================="
 
-nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" --users  2>/dev/null 
-nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" -M laps  2>/dev/null 
-nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" -M adcs  2>/dev/null 
+echo "[*] Command: nxc ldap ${IP} -u '${USER}' -p '${PASS}' -d '${DOMAIN}' --users"
+nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" --users 2>/dev/null || echo "[!] nxc --users failed or not installed"
 
+echo "[*] Command: nxc ldap ${IP} -u '${USER}' -p '${PASS}' -d '${DOMAIN}' -M laps"
+nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" -M laps 2>/dev/null || echo "[!] nxc -M laps failed or not installed"
 
+echo "[*] Command: nxc ldap ${IP} -u '${USER}' -p '${PASS}' -d '${DOMAIN}' -M adcs"
+nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" -M adcs 2>/dev/null || echo "[!] nxc -M adcs failed or not installed"
 
 echo "==============================================================="
 echo "[*] Done. Results saved in $OUTDIR/"
@@ -113,4 +170,5 @@ echo "==============================================================="
 echo "    - Full dump: $OUT_MAIN"
 echo "    - Info ctx:  $OUT_INFO"
 echo "    - UAC=...32: $OUT_PWDNR"
+echo "    - Cascade:   $OUT_CASCADE"
 echo "    - For full results check: $OUTDIR/"
