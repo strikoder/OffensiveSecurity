@@ -162,8 +162,12 @@ test_credentials() {
     echo -e "${BLUE}[CMD] $cmd${NC}"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     
+    # Create temporary file for output
+    local output_file=$(mktemp)
+    
     # Run nxc command with live output and color [+] lines green
     nxc "$protocol" "$target" -u "$user_param" $cred_flag "$cred_param" $flag --continue-on-success 2>&1 | \
+    tee "$output_file" | \
     while IFS= read -r line; do
         if [[ "$line" == *"[+]"* ]]; then
             echo -e "${GREEN}${line}${NC}" | tee -a "$RESULTS_FILE"
@@ -174,6 +178,32 @@ test_credentials() {
     
     local exit_code=${PIPESTATUS[0]}
     
+    # Check for status_not_supported error
+    if grep -qi "status_not_supported" "$output_file"; then
+        rm -f "$output_file"
+        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+        echo -e "${RED}[!] ERROR DETECTED: status_not_supported${NC}\n"
+        
+        echo -e "${YELLOW}[!] This error typically indicates a Kerberos authentication problem.${NC}\n"
+        
+        echo -e "${BLUE}SOLUTION 1: Use Manual Kerberos Enumeration${NC}"
+        echo -e "${GREEN}Add the '-k' flag to manually specify Kerberos authentication:${NC}\n"
+        echo -e "  ${YELLOW}nxc smb HOST_NAME -u $USER_INPUT -p '$PASSWORD' -k${NC}\n"
+        
+        echo -e "${BLUE}SOLUTION 2: Fix Time Synchronization (if you see KRB_AP_ERR_SKEW)${NC}"
+        echo -e "${GREEN}Kerberos requires time sync within 5 minutes. Run these commands:${NC}\n"
+        echo -e "  ${YELLOW}sudo systemctl restart systemd-timesyncd.service${NC}  ${BLUE}# If using systemd-timesyncd${NC}"
+        echo -e "  ${YELLOW}sudo timedatectl set-ntp no${NC}                      ${BLUE}# Disable automatic NTP${NC}"
+        echo -e "  ${YELLOW}sudo ntpdate -u $TARGET${NC}                          ${BLUE}# Sync with target${NC}\n"
+        
+        echo -e "${BLUE}Note:${NC} The first 2 commands depend on your VM configuration."
+        echo -e "      You might not need them if you're not using systemd-timesyncd.\n"
+        
+        echo -e "${RED}[!] Script stopped to prevent further errors.${NC}\n"
+        exit 1
+    fi
+    
+    rm -f "$output_file"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
     
     return $exit_code
