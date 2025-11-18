@@ -8,6 +8,7 @@ Scripts don’t have the `.sh` extension so they can be called directly from the
 ## 🔎 1. `no_auth_smb`
 Enumerates SMB services with **no authentication** (null, anonymous, guest).
 
+- It's way better than smbmap and enum4linux-ng, check for instance blackfield htb and try to run them against the machine, u could only find the users using the nxc --rid-brute
 - Runs safe Nmap SMB scripts
 - Lists shares via `smbclient`
 - Runs `rpcclient` null queries
