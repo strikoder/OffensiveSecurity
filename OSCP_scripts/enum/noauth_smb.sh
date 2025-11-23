@@ -69,7 +69,7 @@ section_header() {
 enum_nmap() {
     section_header "NMAP SMB SCRIPTS"
     nmap -Pn -p445 -sV \
-        --script "smb-protocols,smb2-capabilities,smb-vuln-ms17-010" \
+        --script "smb-security-mode,smb-protocols,smb2-capabilities,smb-vuln-ms17-010" \
         "${TARGET_IP}" 2>&1 || log_warning "Nmap scan failed"
 }
 
