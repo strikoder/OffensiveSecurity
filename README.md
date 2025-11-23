@@ -1,21 +1,31 @@
-# OSCP Toolkit
+# OffensiveSecurity Toolkit
 
-A collection of scripts, notes, and exploits prepared for OSCP-style labs and penetration testing practice.  
-Organized by category for easier navigation.
+A curated collection of offensive security tools, exploits, and scripts for penetration testing and security research.
 
 ## Repository Structure
 
-- **CVES/**  
-  Proof-of-concept exploits, references, and notes for public CVEs.  
-  Example: `CVE-2024-21413`.
+### Bug Bounty
+Tools for web application security testing and bug hunting:
+- `webEnum.sh` - Web enumeration automation script
+- `xssAI.sh` - AI-assisted XSS detection and exploitation
 
-- **OSCP_scripts/**  
-  Custom scripts and helpers for enumeration, exploitation, and automation.  
-  Includes usage notes in `readme.md`.
+### CVEs & Exploits
+Proof-of-concept exploits for known vulnerabilities (check readme in the folder).
 
-- **bughunt/**  
-  Scripts and utilities for web security testing.  
-  Example: `XSS_AI.sh` for automated XSS payload generation/testing.
+### Web & Reverse Shells
+Various reverse shell implementations:
+- **ASP/ASPX** - `asp_rev_shell.aspx`, `cmd-asp-5.1.asp`, `cmdasp.asp`, `cmdasp.aspx`
+- **PowerShell** - `Invoke-ConPtyShell.ps1`, `Invoke-PowerShellTcp.ps1`, `powercat.ps1`
+- **PHP** - `php-reverse-shell.php`, `simple-backdoor.PHP`
+- **WordPress** - `rev-shell-wp-plugin.zip`
 
-- **revshells/**  
-  Reverse shell one-liners, scripts, and cheatsheets for different environments.
+### Scripts & Utilities
+- `commands` - Useful command references
+- `enum` - Enumeration scripts and tools
+- `turbo_intruder.py` - High-speed HTTP request fuzzer
+- `check_disabled_functions.php` - PHP function restrictions checker
+- `dotfiles.sh` - Environment setup script
+
+---
+
+**Remember:** With great power comes great responsibility. Hack ethically. 🛡️
