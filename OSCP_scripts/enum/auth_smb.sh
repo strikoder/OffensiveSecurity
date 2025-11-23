@@ -68,7 +68,7 @@ log "Auth mode: $MODE"
 
 ## 0) NMAP
 log "nmap safe SMB scripts"
-nmap -Pn -p445 -sV --script "smb-protocols,smb2-capabilities,smb-vuln-ms17-010" "$IP" || true
+nmap -Pn -p445 -sV --script "smb-security-mode,smb-protocols,smb2-capabilities,smb-vuln-ms17-010" "$IP" || true
 echo
 
 
