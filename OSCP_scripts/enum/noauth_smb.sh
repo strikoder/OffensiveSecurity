@@ -66,12 +66,7 @@ section_header() {
 
 
 # Main enumeration functions
-enum_nmap() {
-    section_header "NMAP SMB SCRIPTS"
-    nmap -Pn -p445 -sV \
-        --script "smb-security-mode,smb-protocols,smb2-capabilities,smb-vuln-ms17-010" \
-        "${TARGET_IP}" 2>&1 || log_warning "Nmap scan failed"
-}
+
 
 enum_smbclient_shares() {
     section_header "SMBCLIENT - NULL SESSION"
@@ -115,7 +110,7 @@ enum_rpcclient() {
 
 enum_nxc_modules() {
     section_header "NETEXEC - VULNERABILITY MODULES"
-    local modules=(gpp_password gpp_autologin smbghost printnightmare coerce_plus nopac)
+    local modules=(enum_av enum_ca gpp_autologin ioxidresolver ms17-010 petitpotam printerbug printnightmare smbghost spooler webdav gpp_password  smbghost printnightmare coerce_plus zerologon)
     
     for module in "${modules[@]}"; do
         echo -e "\n${YELLOW}[>] Module: ${module}${NC}"
@@ -146,15 +141,18 @@ enum_smbmap() {
     smbmap -H "${TARGET_IP}" -u '' -p '' 2>&1 || log_warning "smbmap with  failed"
 }
 
+enum_nmap() {
+    section_header "NMAP SMB SCRIPTS"
+    nmap -Pn -p445 -sV \
+        --script "smb-security-mode,smb-protocols,smb2-capabilities" \
+        "${TARGET_IP}" 2>&1 || log_warning "Nmap scan failed"
+}
 
 print_summary() {
     section_header "ENUMERATION SUMMARY"
     
     echo
     echo "Results saved to: ${OUT_DIR}/"
-    echo
-    echo -e "${YELLOW}[!] ZEROLOGON (CVE-2020-1472) - Run manually if needed:${NC}"
-    echo -e "    ${CYAN}nxc smb ${TARGET_IP} -u '' -p '' -M zerologon${NC}"
     echo
     echo -e "${YELLOW}[!] If you don't have credentials, consider using usernames as passwords or using cewl or username-anarchy${NC}"
     echo 
