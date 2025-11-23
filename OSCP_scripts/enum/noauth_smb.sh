@@ -179,7 +179,6 @@ EOF
     echo
     
     # Run enumeration
-    enum_nmap
     enum_smbclient_shares
     enum_nxc_rid_brute
     enum_nxc_users
@@ -188,6 +187,7 @@ EOF
     enum_password_policy
     enum_enum4linux
     enum_smbmap
+    enum_nmap
     # Summary
     print_summary
 }
