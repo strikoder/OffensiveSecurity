@@ -1,0 +1,12 @@
+Proof-of-concept exploits for known vulnerabilities:
+- **Apache** - Path traversal & RCE (CVE-2.4.49-2.4.50)
+- **CMS Made Simple** - SQL injection (v2.2.9)
+- **Druva inSync** - Privilege escalation (CVE-2020-5752)
+- **Gibbon LMS** - Authentication bypass (CVE-2023-45878)
+- **HelpDeskZ** - Arbitrary file upload RCE (v1.0.2)
+- **HP Power Manager** - Buffer overflow (CVE-2009-2585)
+- **ImageMagick** - Arbitrary file read (CVE-2023-34152)
+- **Microsoft Outlook** - Malicious email generator (CVE-2024-21413)
+- **mRemoteNG** - Credential decryption
+- **nginx** - Sudo privilege escalation
+- **NSClient++** - Privilege escalation (v0.5.2.35)
