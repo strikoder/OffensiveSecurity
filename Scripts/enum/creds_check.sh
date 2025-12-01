@@ -46,7 +46,7 @@ usage() {
     echo ""
     echo "Examples:"
     echo "  $0 -t 192.168.1.100 -u administrator -p 'Password123'"
-    echo "  $0 -t 192.168.1.100 -u users.txt -p passwords.txt"
+    echo "  $0 -t IPs.txt -u users.txt -p passwords.txt"
     echo "  $0 -t 192.168.1.100 -u admin -H 'aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c'"
     echo "  $0 -t 192.168.1.100 -u admin -p 'Password123' -a local"
     exit 1
