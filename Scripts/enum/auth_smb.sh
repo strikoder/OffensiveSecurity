@@ -85,7 +85,7 @@ echo
 
 
 ## 1) SMB recon (per-flag, clear output)
-FLAGS=(--shares --users --pass-pol --loggedon-users --qwinsta)
+FLAGS=(--shares --users-export --pass-pol --loggedon-users --qwinsta)
 
 OUTDIR="results_auth_smb"
 OUTFILE="$OUTDIR/auth_smb_usernames.txt"
@@ -94,11 +94,11 @@ log "Saving available users to $OUTFILE"
 
 for f in "${FLAGS[@]}"; do
   log "SMB flag: $f"
-  if [[ "$f" == "--users" ]]; then
+  if [[ "$f" == "--users-export" ]]; then
     OUTDIR="results_auth_smb"
     OUTFILE="$OUTDIR/auth_smb_usernames.txt"
     mkdir -p "$OUTDIR"
-    nxc smb "$IP" "${BASE[@]}" "$f" 2>&1 | tee "$OUTFILE" | awk '/user(name)?/I {print $2}' >"$OUTFILE"
+    nxc smb "$IP" "${BASE[@]}" "$f" "$OUTFILE"
     log "Usernames saved to $OUTFILE"
   else
     nxc smb "$IP" "${BASE[@]}" "$f" || true
