@@ -1,47 +1,98 @@
-# SMB Enumeration Scripts (by strikoder)
+# Offensive Security Automation Scripts
 
-This repo contains three Bash scripts for automating **SMB enumeration and attacks**.  
-Scripts don’t have the `.sh` extension so they can be called directly from the terminal.
-
----
-
-## 🔎 1. `no_auth_smb`
-Enumerates SMB services with **no authentication** (null, anonymous, guest).
-
-- It's way better than smbmap and enum4linux-ng, check for instance blackfield htb and try to run them against the machine, u could only find the users using the nxc --rid-brute
-- Runs safe Nmap SMB scripts
-- Lists shares via `smbclient`
-- Runs `rpcclient` null queries
-- Uses `nxc` with null/anonymous/guest
-- Runs `enum4linux-ng`
-- Uses `smbmap` for share permissions & listings
-- Fallback listing with `smbclient`
-- Auto-loots interesting files with `smbget`
-- Greps listings for credential keywords
-- Tests SMB dialects (SMB3/2/NT1)
+Bash scripts for automating Active Directory enumeration and attacks during penetration testing. Scripts don't have the `.sh` extension for direct terminal execution.
 
 ---
 
-## 🔑 2. `auth_smb`
-Enumerates SMB with **valid credentials**.
+## 📁 Repository Structure
 
-- Uses `nxc` with auth for:
-  - Shares, users, groups, pass policy
-  - Logged-on users, qwinsta sessions
-  - GPP passwords, WDigest, Zerologon
-- DPAPI extractions (`--dpapi`, `cookies`, `nosystem`, `--local-auth`)
-- Runs modules (if supported):
-  - `spider_plus`, `sam`, `lsa`, `lsass`, `putty`,  
-    `backup_operator`, `ldapi`, `rdcman`
-- Saves all outputs per target with timestamp
+- **`/enum`** - SMB, LDAP, Kerberos, and DNS enumeration (authenticated & unauthenticated)
+- **`/commands`** - Utility scripts for credential management, payloads, shells, and fuzzing
+
+---
+
+## 🔎 Enumeration Scripts (`/enum`)
+
+### SMB
+
+**`noauth_smb <IP>`**
+- Unauthenticated SMB enumeration (null/anonymous/guest)
+- RID brute force, share permissions, vulnerability scanning
+- Better than smbmap/enum4linux-ng (test on Blackfield HTB!)
+
+**`auth_smb -t <IP> -u <user> [-p <pass> | -H <hash>] [-d <domain>]`**
+- Authenticated SMB enumeration with domain/local auth
+- Share crawling, DPAPI, credential dumping modules
+- Omit `-d` for local authentication
+
+### LDAP
+
+**`noauth_ldap <IP> <domain> [-ldaps]`**
+- Anonymous LDAP enumeration
+- Extracts users, info attributes, UAC flags, cascadeLegacy passwords
+
+**`auth_ldap <IP> <user> [-p <pass> | -H <hash>] <domain> [-ldaps]`**
+- Authenticated LDAP queries with full user attribute dumps
+- AS-REP roasting, Kerberoasting, LAPS enumeration
+
+### Kerberos
+
+**`noauth_kerberos <DC_IP> <domain>`**
+- Kerbrute user enumeration
+- AS-REP roasting with wordlist
+
+**`auth_kerberos -u <user> [-p <pass> | -H <hash>] -i <DC_IP> -d <domain>`**
+- Authenticated AS-REP roasting
+- Kerberoasting (GetUserSPNs)
+
+### DNS
+
+**`noauth_dns <DNS_IP> <domain> [wordlist.txt]`**
+- DNS enumeration (SOA, NS, MX, TXT, SRV records)
+- Zone transfer attempts (AXFR)
+- Subdomain brute forcing with wordlist
+
+---
+
+## 🛠️ Utility Scripts (`/commands`)
+
+**`cred_validator`**
+- Multi-protocol credential validation (SMB, WinRM, RDP, MSSQL, FTP, SSH, LDAP)
+- Spray mode (all users × all passwords) or no-spray mode (paired credentials)
+- Auto-detects passwords vs NTLM hashes
+
+**`revshell_gen`**
+- Interactive reverse shell payload generator
+- Linux: bash, netcat, python, perl, php, ruby (with base64 encoding)
+- Windows: PowerShell, Powercat, nc.exe (download + execute or in-memory)
+
+**`ad_vuln_check <DC_hostname> <DC_IP>`**
+- Quick vulnerability checks: Zerologon, PrintNightmare
+
+**`addhost <IP> <hostname1> [hostname2] ...`**
+- Add/update `/etc/hosts` entries
+
+**`lin_stable_shell`**
+- Linux TTY upgrade cheatsheet
+
+**`export_creds <file>`**
+- Parse credential files and export as shell variables (`user1`, `pass1`, etc.)
+
+**`http_server`**
+- Start Python HTTP server with tun0 IP and wget commands
+
+**`web_fuzz_hints`**
+- Common ffuf/gobuster commands for web fuzzing
+
+**`help`**
+- Display all available custom commands
 
 
+---
 
-## 🚀 Usage
-```bash
-# No-auth enumeration
-./no_auth_smb $IP
+## 📝 Notes
 
-# Authenticated enumeration
-./auth_smb -t $IP -u <user> -p <pass> [-d <domain>] [--local-auth]
-```
+- All enumeration results are saved to `results_*` directories with timestamps
+- Hash authentication supported where applicable (pass-the-hash)
+- Scripts include hints for cracking hashes and next steps
+- Designed for authorized penetration testing only
