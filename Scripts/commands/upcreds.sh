@@ -10,6 +10,18 @@ if [ ! -f "$FILE" ]; then
     echo "Error: File '$FILE' not found"
     exit 1
 fi
+
+# Function to check if string contains special characters that need quoting
+needs_quotes() {
+    local str="$1"
+    # Check for spaces, special shell characters, or anything non-alphanumeric except - _ . /
+    if [[ "$str" =~ [^a-zA-Z0-9._/-] ]]; then
+        return 0  # needs quotes
+    else
+        return 1  # doesn't need quotes
+    fi
+}
+
 counter=1
 while IFS= read -r line || [ -n "$line" ]; do
     # Skip empty lines
@@ -18,11 +30,10 @@ while IFS= read -r line || [ -n "$line" ]; do
     if [[ "$line" == :* ]]; then
         # Line starts with : - password only
         password="${line#:}"
-        # Check if password looks like a hash (32+ hex chars)
-        if [[ "$password" =~ ^[a-fA-F0-9]{32,}$ ]]; then
-            exportall "pass${counter}=${password}"
-        else
+        if needs_quotes "$password"; then
             exportall "pass${counter}='${password}'"
+        else
+            exportall "pass${counter}=${password}"
         fi
         echo "Exported: pass${counter}"
         ((counter++))
@@ -30,19 +41,29 @@ while IFS= read -r line || [ -n "$line" ]; do
         # Line contains : - username:password
         username="${line%%:*}"
         password="${line#*:}"
-        exportall "user${counter}=${username}"
-        # Check if password looks like a hash (32+ hex chars)
-        if [[ "$password" =~ ^[a-fA-F0-9]{32,}$ ]]; then
-            exportall "pass${counter}=${password}"
+        
+        if needs_quotes "$username"; then
+            exportall "user${counter}='${username}'"
         else
-            exportall "pass${counter}='${password}'"
+            exportall "user${counter}=${username}"
         fi
+        
+        if needs_quotes "$password"; then
+            exportall "pass${counter}='${password}'"
+        else
+            exportall "pass${counter}=${password}"
+        fi
+        
         echo "Exported: user${counter}, pass${counter}"
         ((counter++))
     else
         # Line has no : - username only
         username="$line"
-        exportall "user${counter}=${username}"
+        if needs_quotes "$username"; then
+            exportall "user${counter}='${username}'"
+        else
+            exportall "user${counter}=${username}"
+        fi
         echo "Exported: user${counter}"
         ((counter++))
     fi
