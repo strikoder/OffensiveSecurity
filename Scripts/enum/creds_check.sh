@@ -687,7 +687,7 @@ echo -e "${BLUE}================================${NC}\n"
 
 if [[ -s "$RESULTS_FILE" ]]; then
     # Extract and display valid credentials
-    grep -E '\(\+\)|Pwn3d!|SUCCESS' "$RESULTS_FILE" 2>/dev/null || echo -e "${YELLOW}[*] Check output above for results${NC}"
+    grep -E '\[\+\]' "$RESULTS_FILE" 2>/dev/null || echo -e "${YELLOW}[*] Check output above for results${NC}"
     echo -e "\n${GREEN}[+] Testing completed!${NC}"
     echo -e "${YELLOW}[*] Full results saved to: $RESULTS_FILE${NC}"
     echo -e "${YELLOW}[*] Copy results before script exits to preserve them${NC}"
