@@ -1,29 +1,96 @@
 #!/bin/bash
 cat <<'EOF'
-Available custom commands:
+===============================================================================
+                       CUSTOM PENTESTING COMMANDS
+===============================================================================
 
-- addhost <IP> <hostname1> [hostname2] ...
-    Add/update entries in /etc/hosts.
+GENERAL UTILITIES
+-----------------
+  upcreds <file>
+    Parse and organize credentials from a file
 
-- auth_ldap <IP> <username> <password> <domain> [-ldap|-ldaps]
-    Authenticated LDAP dump + info/UAC/cascadeLegacy extraction.
+  methodology
+    Display attack methodology and enumeration workflows
 
-- auth_smb -t <IP> -u <USER> -p <PASS> [-d <DOMAIN>]
-    Authenticated SMB/LDAP enum, DPAPI, and NetExec modules.
-    Note: omitting -d means local auth.
+  tools
+    List available pentesting tools and their usage
 
-- noauth_ldap -t <IP> -d <domain> [-ldaps]
-    Anonymous LDAP enum; saves usernames and cascadeLegacy creds.
+  revshells
+    Generate reverse shell payloads for various platforms
 
-- noauth_smb <IP>
-    Anonymous SMB enum (nmblookup, nmap SMB, rpcclient, RID brute, modules, pulls).
+  gtfobinsuid
+    Search GTFOBins for SUID/privilege escalation techniques
 
-- noauth_kerberos -t <DC_IP> -d <DOMAIN>
-    Kerbrute userenum or AS-REP roasting (GetNPUsers).
+  strilogger <IP>
+    Start a logging/monitoring session for the target IP
 
-- dns_enum <DNS_IP> <domain> [subdomains.txt]
-    DNS/AD SRV queries, AXFR attempt, reverse, optional brute-force.
+-------------------------------------------------------------------------------
 
-- lin_stable_shell
-    TTY upgrade and terminal tweaks cheat-sheet.
+WEB & NETWORK
+-------------
+  webserver
+    Start a Python HTTP server (default: port 8000)
+
+  winwebserver
+    Start a Windows-compatible web server
+
+  addhost <IP> <hostname1> [hostname2] ...
+    Add or update entries in /etc/hosts
+
+-------------------------------------------------------------------------------
+
+CREDENTIAL ATTACKS
+------------------
+  credspray -t IPs.txt -u users.txt -c creds.txt
+    Spray credentials across multiple targets
+
+  nagoyaspray --seasons --start 2022 --end 2023 -o passwords.txt
+    Advanced password spraying tool
+
+-------------------------------------------------------------------------------
+
+ACTIVE DIRECTORY - NO CREDENTIALS
+----------------------------------
+  noauth_smb <IP>
+    Anonymous SMB enumeration (nmblookup, nmap, rpcclient, RID brute,
+    modules, pulls)
+    Example: noauth_smb $ad2
+
+  noauth_ldap <IP> <domain> [ldap|ldaps]
+    Anonymous LDAP enumeration; saves usernames and cascadeLegacy creds
+    Example: noauth_ldap $dcip $domain ldap
+
+  noauth_kerberos -t <DC_IP> -d <DOMAIN>
+    Kerbrute user enumeration or AS-REP roasting (GetNPUsers)
+    Example: noauth_kerberos -t $dcip -d $domain
+
+  noauth_dns <DNS_IP> <domain> [subdomains.txt]
+    DNS/AD SRV queries, AXFR attempt, reverse lookup, optional brute-force
+    Example: noauth_dns $IP $domain
+
+-------------------------------------------------------------------------------
+
+ACTIVE DIRECTORY - WITH CREDENTIALS
+------------------------------------
+  auth_smb -t <IP> -u <USER> -p <PASS> -d <DOMAIN>
+    Authenticated SMB/LDAP enumeration, DPAPI extraction, NetExec modules
+    Note: Omit -d for local authentication
+    Example: auth_smb -t $ad2 -u $user1 -p $pass1 -d $domain
+
+  auth_kerberos -u <USER> -p <PASS> -i <DC_IP> -d <DOMAIN>
+    Authenticated Kerberos attacks (Kerberoasting, ticket extraction)
+    Example: auth_kerberos -u $user -p $pass -i $dcip -d $domain
+
+  auth_ldap <IP> <username> -p <password> <domain> [-ldap|-ldaps]
+    Authenticated LDAP dump with info/UAC/cascadeLegacy extraction
+    Example: auth_ldap $IP $user2 -p $pass2 $domain -ldap
+
+-------------------------------------------------------------------------------
+
+SHELL STABILIZATION
+-------------------
+  stable
+    Interactive shell upgrade commands (Python, script, socat)
+
+===============================================================================
 EOF
