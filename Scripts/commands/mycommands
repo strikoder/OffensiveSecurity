@@ -6,6 +6,9 @@ cat <<'EOF'
 
 GENERAL UTILITIES
 -----------------
+  tmuxlogger <IP>
+    Just a simple logger with tmux pipe under the hood
+
   upcreds <file>
     Parse and organize credentials from a file
 
