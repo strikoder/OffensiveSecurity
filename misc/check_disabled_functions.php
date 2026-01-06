@@ -18,7 +18,7 @@ $dangerous_functions = array(
     'imap_open','imap_mail','libvirt_connect','gnupg_init','imagick',
     // extra execution-related functions
     'assert','create_function','dl','unserialize','expect_popen','ssh2_exec',
-    'preg_replace','mb_ereg_replace','FFI'
+    'preg_replace','mb_ereg_replace','FFI','eval','passthru','curl_exec','shell','fsockopen'
 );
 
 foreach ($dangerous_functions as $function) 
@@ -26,10 +26,6 @@ foreach ($dangerous_functions as $function)
     if (function_exists($function)) 
     {
         echo $function . " is enabled\n";
-    }
-    else 
-    {
-        echo $function . " is disabled!\n";
     }
 }
 ?>
