@@ -160,7 +160,6 @@ print_summary() {
 
 # Main execution
 main() {
-    clear
     echo -e "${CYAN}"
     cat << "EOF"
 ╔═══════════════════════════════════════════════════════════╗
