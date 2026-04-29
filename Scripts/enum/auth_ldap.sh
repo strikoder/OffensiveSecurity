@@ -213,7 +213,7 @@ for flag in "${DASH_FLAGS[@]}"; do
 done
 
 # Modules with -M flag
-MODULES=(laps adcs)
+MODULES=(laps adcs pre2k)
 for module in "${MODULES[@]}"; do
   echo "[*] Running: ${BASE_CMD} -M ${module}"
   ${BASE_CMD} -M ${module} || true
