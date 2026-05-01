@@ -197,7 +197,7 @@ else
 fi
 
 # Commands with -- flags
-DASH_FLAGS=(--users-export --asreproast --kerberoasting)
+DASH_FLAGS=(--users-export --asreproast --kerberoasting --gmsa)
 for flag in "${DASH_FLAGS[@]}"; do
   echo "[*] Running: ${BASE_CMD} ${flag}"
   if [[ "$flag" == "--users-export" ]]; then
