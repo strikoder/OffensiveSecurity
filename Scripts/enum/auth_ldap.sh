@@ -95,7 +95,7 @@ mkdir -p "$OUTDIR"
 OUT_MAIN="${OUTDIR}/ldap.txt"
 OUT_INFO="${OUTDIR}/ldap_info_ctx.txt"
 OUT_PWDNR="${OUTDIR}/ldap_pwdnotreqd.txt"
-OUT_CASCADE="${OUTDIR}/ldap_cascade_pwd.txt"
+OUT_CASCADE="${OUTDIR}/ldap_cascade_pwd_b64.txt"
 
 # Only run ldapsearch if using password (ldapsearch doesn't support hash auth)
 if [[ -n "$PASS" ]]; then
@@ -168,7 +168,7 @@ if [[ -n "$PASS" ]]; then
     grep -E -B1 -A2 '^userAccountControl:[[:space:]]*[0-9]*32$' "$OUT_MAIN" | tee "$OUT_PWDNR" || true
 
     echo "==============================================================="
-    echo "[*] Extracting cascadeLegacy creds -> $OUT_CASCADE"
+    echo "[*] Extracting cascadeLegacy creds (in base64) -> $OUT_CASCADE"
     echo "==============================================================="
     awk 'BEGIN{IGNORECASE=1}
          /^$/ { if(u!="" && p!=""){print u ":" p}; u=""; p=""; next }
