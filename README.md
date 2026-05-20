@@ -2,6 +2,11 @@
 
 A curated collection of offensive security tools, exploits, and scripts for penetration testing and security research.
 
+> If you enjoy this repository and want more advanced red teaming resources, OSWE-focused code snippets, private tooling, and exclusive offensive security content, check out `https://strikoder/coffee`.
+>
+> Access is available through the Red Teamer subscription tier and includes private repositories, OSWE code snippets, advanced material, and additional offensive security resources.
+
+
 ## Repository Structure
 
 ### Bug Bounty
