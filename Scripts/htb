@@ -1,0 +1,744 @@
+#!/usr/bin/env bash
+# htb — HackTheBox from the terminal.
+#
+#   htb start <name>    connect VPN, spawn the box, workspace + tmux, print IP
+#   htb stop            terminate the box and drop the VPN
+#   htb connect         connect the VPN only
+#   htb disconnect      drop the VPN only
+#   htb flag <hash>     submit a flag   [-m <machine>] [-t user|root]
+#   htb coverage        show your progress; --out also writes the site's grid
+#
+# Token:  /home/strikoder/vpn/htbapi.txt   ($HTB_TOKEN_FILE, or $HTB_TOKEN)
+# VPNs:   /home/strikoder/vpn/*.ovpn       ($HTB_VPN_DIR)
+# Boxes:  /home/machines/<box>/            ($STRIKALI_MACHINES_DIR)
+#
+# Needs: curl, jq. tmux and openvpn optional but expected.
+
+set -euo pipefail
+
+# ================================================================== config
+
+HTB_V4="${HTB_V4:-https://labs.hackthebox.com/api/v4}"
+HTB_V5="${HTB_V5:-https://labs.hackthebox.com/api/v5}"
+HTB_UA="${HTB_UA:-strikali/1.0}"
+HTB_TOKEN_FILE="${HTB_TOKEN_FILE:-/home/strikoder/vpn/htbapi.txt}"
+HTB_VPN_DIR="${HTB_VPN_DIR:-/home/strikoder/vpn}"
+MACHINES_DIR="${STRIKALI_MACHINES_DIR:-/home/machines}"
+HOSTS_FILE="${STRIKALI_HOSTS_FILE:-/etc/hosts}"
+HTB_DOMAIN_SUFFIX="${HTB_DOMAIN_SUFFIX:-htb}"
+WINDOWS="${HTB_TMUX_WINDOWS:-recon web shell privesc}"
+VPN_PID_FILE="${HTB_VPN_PID_FILE:-/tmp/htb-vpn.pid}"
+VPN_LOG="${HTB_VPN_LOG:-/tmp/htb-vpn.log}"
+VPN_TIMEOUT="${HTB_VPN_TIMEOUT:-45}"
+SPAWN_TIMEOUT="${HTB_SPAWN_TIMEOUT:-180}"
+
+_c_ok=$'\e[32m'; _c_warn=$'\e[33m'; _c_err=$'\e[31m'; _c_dim=$'\e[2m'; _c_off=$'\e[0m'
+[[ -t 2 ]] || { _c_ok=; _c_warn=; _c_err=; _c_dim=; _c_off=; }
+
+log()  { printf '%s[*]%s %s\n' "$_c_dim"  "$_c_off" "$*" >&2; }
+ok()   { printf '%s[+]%s %s\n' "$_c_ok"   "$_c_off" "$*" >&2; }
+warn() { printf '%s[!]%s %s\n' "$_c_warn" "$_c_off" "$*" >&2; }
+die()  { printf '%s[-]%s %s\n' "$_c_err"  "$_c_off" "$*" >&2; exit 1; }
+
+need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
+
+lower_of() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+sudo_if_needed() { [[ $EUID -eq 0 ]] || printf 'sudo'; }
+
+# ================================================================== auth
+
+_token_from_file() {
+  local file="$1" line
+  [[ -r "$file" ]] || return 1
+  line="$(grep -v -E '^\s*(#|$)' "$file" | head -n1)" || return 1
+  line="${line#*HTB_TOKEN=}"
+  line="${line%\"}"; line="${line#\"}"
+  line="${line%\'}"; line="${line#\'}"
+  line="$(printf '%s' "$line" | tr -d '[:space:]')"
+  [[ -n "$line" ]] || return 1
+  if [[ "$(stat -c '%a' "$file" 2>/dev/null || echo 600)" =~ [1-7]$ ]]; then
+    warn "$file is world-readable — chmod 600 it"
+  fi
+  printf '%s' "$line"
+}
+
+htb_token() {
+  [[ -n "${HTB_TOKEN:-}" ]] && { printf '%s' "$HTB_TOKEN"; return; }
+  _token_from_file "$HTB_TOKEN_FILE" && return
+  die "no HTB token. Put it in $HTB_TOKEN_FILE or set \$HTB_TOKEN."
+}
+
+# ================================================================== http
+
+# _api <METHOD> <BASE> <PATH> [json-body]
+_api() {
+  local method="$1" base="$2" path="$3" body="${4:-}"
+  local tmp status args=()
+  tmp="$(mktemp)"
+  args=(-sS -X "$method" -o "$tmp" -w '%{http_code}'
+        -H "Authorization: Bearer $(htb_token)"
+        -H "User-Agent: $HTB_UA"
+        -H "Accept: application/json")
+  [[ -n "$body" ]] && args+=(-H "Content-Type: application/json" -d "$body")
+  status="$(curl "${args[@]}" "${base}${path}")" \
+    || { rm -f "$tmp"; die "request failed: $method $path"; }
+  if [[ "$status" != 2* ]]; then
+    local msg; msg="$(jq -r '.message // .error // empty' <"$tmp" 2>/dev/null || true)"
+    rm -f "$tmp"
+    die "HTTP $status${msg:+ — $msg}"
+  fi
+  cat "$tmp"; rm -f "$tmp"
+}
+
+api_get4()  { _api GET  "$HTB_V4" "$1"; }
+api_get5()  { _api GET  "$HTB_V5" "$1"; }
+api_post4() { _api POST "$HTB_V4" "$1" "$2"; }
+api_post5() { _api POST "$HTB_V5" "$1" "$2"; }
+
+# /machine/profile/{slug} takes the machine name or its numeric ID.
+machine_profile() {
+  local target="$1"
+  if [[ "${_PROFILE_KEY:-}" != "$target" ]]; then
+    _PROFILE_VAL="$(api_get4 "/machine/profile/$target" | jq '.info')"
+    [[ "$_PROFILE_VAL" != "null" && -n "$_PROFILE_VAL" ]] \
+      || die "no machine matching '$target'"
+    _PROFILE_KEY="$target"
+  fi
+  printf '%s' "$_PROFILE_VAL"
+}
+
+active_info() { api_get5 "/virtual_machine/active" | jq '.info'; }
+
+# ================================================================== vpn
+
+vpn_iface() {
+  ip -o link show 2>/dev/null | awk -F': ' '$2 ~ /^tun[0-9]+/ {print $2; exit}'
+}
+
+vpn_connected() { [[ -n "$(vpn_iface)" ]]; }
+
+vpn_pick() {
+  local files=() f i choice
+
+  if [[ -n "${HTB_VPN_CONFIG:-}" ]]; then
+    [[ -r "$HTB_VPN_CONFIG" ]] || die "HTB_VPN_CONFIG not readable: $HTB_VPN_CONFIG"
+    printf '%s' "$HTB_VPN_CONFIG"; return
+  fi
+
+  while IFS= read -r -d '' f; do files+=("$f"); done \
+    < <(find "$HTB_VPN_DIR" -maxdepth 1 -name '*.ovpn' -print0 2>/dev/null | sort -z)
+
+  (( ${#files[@]} )) || die "no .ovpn files in $HTB_VPN_DIR"
+  if (( ${#files[@]} == 1 )); then printf '%s' "${files[0]}"; return; fi
+
+  [[ -r /dev/tty ]] || die "several VPN configs but no terminal to ask on — set HTB_VPN_CONFIG"
+  echo "Available VPN configs:" >&2
+  for i in "${!files[@]}"; do
+    printf '  %2d) %s\n' "$((i+1))" "$(basename "${files[$i]}")" >&2
+  done
+  printf 'Choose [1-%d]: ' "${#files[@]}" >&2
+  read -r choice </dev/tty
+  [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#files[@]} )) \
+    || die "invalid choice"
+  printf '%s' "${files[$((choice-1))]}"
+}
+
+vpn_connect() {
+  if vpn_connected; then ok "VPN already up on $(vpn_iface)"; return; fi
+  need openvpn
+
+  local config; config="$(vpn_pick)"
+  log "connecting: $(basename "$config")"
+
+  $(sudo_if_needed) openvpn --config "$config" --daemon htb-vpn \
+    --writepid "$VPN_PID_FILE" --log "$VPN_LOG" \
+    || die "openvpn failed to launch — see $VPN_LOG"
+
+  local waited=0 iface
+  printf '%s[*]%s waiting for tunnel' "$_c_dim" "$_c_off" >&2
+  while (( waited < VPN_TIMEOUT )); do
+    if vpn_connected; then
+      printf '\n' >&2
+      iface="$(vpn_iface)"
+      ok "VPN up on $iface ($(ip -4 -o addr show "$iface" | awk '{print $4}' | cut -d/ -f1))"
+      return
+    fi
+    printf '.' >&2; sleep 2; waited=$((waited+2))
+  done
+  printf '\n' >&2
+  die "no tunnel after ${VPN_TIMEOUT}s — check $VPN_LOG"
+}
+
+vpn_disconnect() {
+  if ! vpn_connected && [[ ! -f "$VPN_PID_FILE" ]]; then
+    log "VPN not connected"; return
+  fi
+
+  if [[ -f "$VPN_PID_FILE" ]]; then
+    local pid; pid="$(cat "$VPN_PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      $(sudo_if_needed) kill "$pid" 2>/dev/null || true
+    fi
+    $(sudo_if_needed) rm -f "$VPN_PID_FILE"
+  else
+    warn "no pidfile — killing any openvpn process"
+    $(sudo_if_needed) pkill -f 'openvpn --config' 2>/dev/null || true
+  fi
+
+  local waited=0
+  while (( waited < 10 )); do
+    vpn_connected || { ok "VPN disconnected"; return; }
+    sleep 1; waited=$((waited+1))
+  done
+  warn "tunnel still up — check manually"
+}
+
+# ================================================================== hosts
+
+hosts_write() {
+  local ip="$1" lower="$2" marker tmp writer
+  marker="# strikali:htb:${lower}"
+  tmp="$(mktemp)"
+  writer=(tee); [[ -w "$HOSTS_FILE" ]] || writer=(sudo tee)
+  grep -v -F "$marker" "$HOSTS_FILE" >"$tmp" || true
+  printf '%s\t%s.%s %s %s\n' "$ip" "$lower" "$HTB_DOMAIN_SUFFIX" "$lower" "$marker" >>"$tmp"
+  "${writer[@]}" "$HOSTS_FILE" <"$tmp" >/dev/null
+  rm -f "$tmp"
+  ok "hosts: $ip  ${lower}.${HTB_DOMAIN_SUFFIX}  ${lower}"
+}
+
+hosts_clear() {
+  local lower="$1" marker tmp writer
+  marker="# strikali:htb:${lower}"
+  grep -q -F "$marker" "$HOSTS_FILE" 2>/dev/null || return 0
+  tmp="$(mktemp)"
+  writer=(tee); [[ -w "$HOSTS_FILE" ]] || writer=(sudo tee)
+  grep -v -F "$marker" "$HOSTS_FILE" >"$tmp" || true
+  "${writer[@]}" "$HOSTS_FILE" <"$tmp" >/dev/null
+  rm -f "$tmp"
+  log "removed ${lower} from $HOSTS_FILE"
+}
+
+# ================================================================== workspace
+
+scaffold() {
+  local name="$1" ip="$2" lower dir notes p os diff pts rel
+  lower="$(lower_of "$name")"
+  dir="${MACHINES_DIR}/${lower}"
+  mkdir -p "$dir"/{nmap,loot,exploit,www}
+
+  notes="$dir/notes.md"
+  if [[ ! -f "$notes" ]]; then
+    p="$(machine_profile "$name")"
+    os="$(jq -r '.os // "?"' <<<"$p")"
+    diff="$(jq -r '.difficultyText // "?"' <<<"$p")"
+    pts="$(jq -r '.points // "?"' <<<"$p")"
+    rel="$(jq -r '.release // "?"' <<<"$p" | cut -dT -f1)"
+    cat >"$notes" <<EOF
+# ${name}
+
+| | |
+|---|---|
+| Box | ${name} |
+| OS | ${os} |
+| Difficulty | ${diff} |
+| Points | ${pts} |
+| Released | ${rel} |
+| IP | ${ip} |
+| Started | $(date -Iseconds) |
+
+## Recon
+
+## Foothold
+
+## Privilege escalation
+
+## Loot
+
+## Writeup notes
+EOF
+  fi
+
+  cat >"$dir/.env" <<EOF
+export IP=$ip
+export BOX=$name
+export BOXDIR=$dir
+EOF
+
+  printf '%s' "$dir"
+}
+
+tmux_setup() {
+  local name="$1" ip="$2" dir="$3" lower session first target win
+  lower="$(lower_of "$name")"
+  command -v tmux >/dev/null 2>&1 || { warn "tmux not installed — skipping"; return; }
+
+  prime() {
+    tmux send-keys -t "$1" \
+      "cd '$dir' && export IP=$ip BOX=$name BOXDIR='$dir' && clear" C-m
+  }
+
+  if [[ -n "${TMUX:-}" ]]; then
+    session="$(tmux display-message -p '#S')"
+    first=""
+    for win in $WINDOWS; do
+      target="$(tmux new-window -P -F '#{session_name}:#{window_index}' \
+                  -t "${session}:" -n "${lower}-${win}" -c "$dir")"
+      prime "$target"
+      [[ -z "$first" ]] && first="$target"
+    done
+    [[ -n "$first" ]] && tmux select-window -t "$first"
+    ok "windows added to session '$session': ${WINDOWS// /, }"
+  else
+    session="${HTB_TMUX_SESSION:-$lower}"
+    if tmux has-session -t "$session" 2>/dev/null; then
+      warn "tmux session '$session' already exists — leaving it alone"
+    else
+      set -- $WINDOWS
+      first="$(tmux new-session -d -P -F '#{session_name}:#{window_index}' \
+                 -s "$session" -n "${lower}-$1" -c "$dir")"
+      prime "$first"
+      shift
+      for win in "$@"; do
+        target="$(tmux new-window -P -F '#{session_name}:#{window_index}' \
+                    -t "${session}:" -n "${lower}-${win}" -c "$dir")"
+        prime "$target"
+      done
+      tmux select-window -t "$first"
+      ok "tmux session '$session' ready: ${WINDOWS// /, }"
+    fi
+    log "attach with:  tmux attach -t $session"
+  fi
+}
+
+# ================================================================== commands
+
+cmd_start() {
+  local target="${1:-}"
+  [[ -n "$target" ]] || die "usage: htb start <name|id>"
+  need curl; need jq
+
+  vpn_connect
+
+  local profile id name lower current cur_id ip="" waited=0 dir
+  profile="$(machine_profile "$target")"
+  id="$(jq -r '.id' <<<"$profile")"
+  name="$(jq -r '.name' <<<"$profile")"
+  lower="$(lower_of "$name")"
+
+  current="$(active_info)"
+  if [[ "$current" != "null" ]]; then
+    cur_id="$(jq -r '.id' <<<"$current")"
+    if [[ "$cur_id" == "$id" ]]; then
+      log "$name is already spawned"
+    else
+      die "$(jq -r '.name' <<<"$current") is currently spawned — \`htb stop\` first"
+    fi
+  else
+    log "spawning $name (id $id)"
+    api_post4 "/vm/spawn" "$(jq -nc --argjson m "$id" '{machine_id:$m}')" \
+      | jq -r '.message // "spawn requested"' >&2
+  fi
+
+  printf '%s[*]%s waiting for IP' "$_c_dim" "$_c_off" >&2
+  while (( waited < SPAWN_TIMEOUT )); do
+    ip="$(active_info | jq -r '.ip // empty')"
+    [[ -n "$ip" ]] && break
+    printf '.' >&2; sleep 5; waited=$((waited+5))
+  done
+  printf '\n' >&2
+  [[ -n "$ip" ]] || die "no IP after ${SPAWN_TIMEOUT}s — check the VPN"
+
+  ok "$name is up"
+  hosts_write "$ip" "$lower"
+  dir="$(scaffold "$name" "$ip")"
+  ok "workspace: $dir"
+  tmux_setup "$name" "$ip" "$dir"
+
+  printf '%s\n' "$ip"          # stdout: just the IP
+}
+
+cmd_stop() {
+  need curl; need jq
+  local info id name lower
+  info="$(active_info)"
+  if [[ "$info" == "null" ]]; then
+    log "nothing spawned"
+  else
+    id="$(jq -r '.id' <<<"$info")"
+    name="$(jq -r '.name' <<<"$info")"
+    lower="$(lower_of "$name")"
+    api_post4 "/vm/terminate" "$(jq -nc --argjson m "$id" '{machine_id:$m}')" \
+      | jq -r '.message // "terminate requested"' >&2
+    ok "terminated $name"
+    hosts_clear "$lower"
+  fi
+  vpn_disconnect
+}
+
+cmd_flag() {
+  need curl; need jq
+  local flag="" machine="" expect="" id resp got gotl
+
+  while (( $# )); do
+    case "$1" in
+      -m|--machine) machine="${2:-}"; shift 2 ;;
+      -t|--type)    expect="$(lower_of "${2:-}")"; shift 2 ;;
+      -*)           die "unknown option: $1" ;;
+      *)            flag="$1"; shift ;;
+    esac
+  done
+
+  [[ -n "$flag" ]] || die "usage: htb flag <hash> [-m <machine>] [-t user|root]"
+  [[ -z "$expect" || "$expect" == "user" || "$expect" == "root" ]] \
+    || die "-t takes 'user' or 'root'"
+  [[ "$flag" =~ ^[0-9a-fA-F]{32}$ ]] || warn "that doesn't look like a 32-char MD5 flag"
+
+  if [[ -n "$machine" ]]; then
+    id="$(machine_profile "$machine" | jq -r '.id')"
+  else
+    id="$(active_info | jq -r '.id // empty')"
+    [[ -n "$id" ]] || die "nothing spawned — pass -m <machine>"
+  fi
+
+  resp="$(api_post5 "/machine/own" \
+          "$(jq -nc --argjson id "$id" --arg f "$flag" '{id:$id, flag:$f}')")"
+
+  jq -r '"\(.message)  [\(.own_type) +\(.points)pts]"
+         + (if .machine_pwned then "  — box pwned" else "" end)
+         + (if .blood_taken == 1 then "  BLOOD" else "" end)' <<<"$resp"
+
+  if [[ -n "$expect" ]]; then
+    got="$(jq -r '.own_type // "?"' <<<"$resp")"
+    gotl="$(lower_of "$got")"
+    [[ "$gotl" == "$expect" ]] || warn "you said $expect, the server logged it as $got"
+  fi
+}
+
+# ------------------------------------------------------------------ coverage
+
+# Slugs of every machine you've published a writeup for: filename stems (or the
+# parent dir for index files), plus any front-matter `title:` we can read.
+covered_slugs_from_dir() {
+  local dir="$1" f stem title
+  [[ -d "$dir" ]] || die "not a directory: $dir"
+  while IFS= read -r -d '' f; do
+    stem="$(basename "$f")"; stem="${stem%.*}"
+    case "$(lower_of "$stem")" in
+      index|_index|readme) stem="$(basename "$(dirname "$f")")" ;;
+    esac
+    lower_of "$stem" | tr -cd 'a-z0-9\n'; echo
+    title="$(head -c 1500 "$f" | grep -m1 -E '^title:' | sed -E 's/^title:[[:space:]]*//; s/^["'"'"']//; s/["'"'"']$//' || true)"
+    [[ -n "$title" ]] && { lower_of "$title" | tr -cd 'a-z0-9\n'; echo; }
+  done < <(find "$dir" -type f \( -name '*.md' -o -name '*.mdx' -o -name '*.html' \) -print0)
+}
+
+covered_slugs_from_file() {
+  local file="$1"
+  [[ -f "$file" ]] || die "not a file: $file"
+  grep -v -E '^\s*(#|$)' "$file" | while IFS= read -r line; do
+    lower_of "$line" | tr -cd 'a-z0-9\n'; echo
+  done
+}
+
+# Pages through /machines and writes the combined array to $2.
+# Everything goes through files: a full machine list is megabytes of JSON and
+# blows past ARG_MAX if passed as a jq --argjson argument.
+fetch_all_machines() {
+  local states="$1" outfile="$2" page=1 last=1 query
+  local state_q="" pages payload
+
+  local IFS=,
+  for s in $states; do
+    [[ -n "$s" ]] && state_q="${state_q}&state=${s}"
+  done
+  unset IFS
+
+  pages="$(mktemp)"
+  payload="$(mktemp)"
+
+  while :; do
+    query="/machines?per_page=100&page=${page}${state_q}"
+    api_get5 "$query" > "$payload"
+    jq -c '.data // []' "$payload" >> "$pages"
+    last="$(jq -r '.meta.last_page // 1' "$payload")"
+    (( page >= last )) && break
+    (( page++ ))
+  done
+
+  jq -s -c 'add // []' "$pages" > "$outfile"
+  rm -f "$pages" "$payload"
+}
+
+coverage_css() {
+  cat <<'CSS'
+.htb-coverage{--htb-gap:.5rem;--htb-radius:3px;
+  --htb-covered:var(--accent,#3f8f5e);--htb-backlog:var(--warning,#b7791f);
+  --htb-partial:var(--muted-fg,#8a8a8a);--htb-untouched:var(--border,#d8d8d8);
+  font:inherit}
+.htb-coverage__stats{display:flex;flex-wrap:wrap;gap:1.25rem;margin:0 0 1rem;
+  padding:0;list-style:none}
+.htb-coverage__stat{display:flex;flex-direction:column;gap:.15rem}
+.htb-coverage__stat b{font-size:1.6rem;font-weight:600;line-height:1;
+  font-variant-numeric:tabular-nums}
+.htb-coverage__stat span{font-size:.75rem;letter-spacing:.06em;
+  text-transform:uppercase;opacity:.7}
+.htb-coverage__legend{display:flex;flex-wrap:wrap;gap:.75rem;margin:0 0 1rem;
+  padding:0;list-style:none;font-size:.8rem}
+.htb-coverage__legend li{display:flex;align-items:center;gap:.35rem}
+.htb-coverage__swatch{width:.7rem;height:.7rem;border-radius:var(--htb-radius);
+  background:var(--htb-untouched)}
+.htb-coverage__grid{display:grid;gap:var(--htb-gap);
+  grid-template-columns:repeat(auto-fill,minmax(1.1rem,1fr));margin:0;padding:0;
+  list-style:none}
+.htb-tile{aspect-ratio:1;border-radius:var(--htb-radius);
+  background:var(--htb-untouched)}
+.htb-tile a{display:block;width:100%;height:100%;border-radius:inherit}
+.htb-coverage .visually-hidden{position:absolute;width:1px;height:1px;padding:0;
+  margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.htb-tile:focus-within{outline:2px solid currentColor;outline-offset:2px}
+.htb-tile--covered,.htb-coverage__swatch--covered{background:var(--htb-covered)}
+.htb-tile--backlog,.htb-coverage__swatch--backlog{background:var(--htb-backlog)}
+.htb-tile--partial,.htb-coverage__swatch--partial{background:var(--htb-partial)}
+.htb-coverage__backlog{margin:1.5rem 0 0;padding:0;list-style:none;
+  display:flex;flex-wrap:wrap;gap:.4rem;font-size:.85rem}
+.htb-coverage__backlog li{border:1px solid var(--border,#d8d8d8);
+  border-radius:var(--htb-radius);padding:.15rem .5rem}
+@media (max-width:480px){
+  .htb-coverage__grid{grid-template-columns:repeat(auto-fill,minmax(.9rem,1fr))}}
+CSS
+}
+
+# Human-readable progress report. Second arg is the covered-slug list; when it's
+# empty we skip the writeup columns entirely.
+print_progress() {
+  local data="$1" has_cov="${2:-false}"
+
+  jq -r --argjson has_cov "$has_cov" '
+    def pct($n; $d): if $d > 0 then ((100 * $n / $d) | round | tostring) + "%" else "—" end;
+    def pad($s; $w): ($s | tostring) + (" " * (($w - ($s | tostring | length)) | if . < 0 then 0 else . end));
+
+    .machines as $m
+    | ($m | length)                                   as $total
+    | ($m | map(select(.rootOwned))     | length)     as $rooted
+    | ($m | map(select(.userOwned))     | length)     as $userd
+    | ($m | map(select(.userOwned and (.rootOwned|not))) | length) as $partial
+    | ($m | map(select(.rootOwned)) | map(.points // 0) | add // 0) as $points
+    | ($m | map(select(.coverage=="covered")) | length) as $written
+    | ($m | map(select(.coverage=="backlog")) | length) as $backlog
+
+    | "  HackTheBox progress"
+    , "  " + ("─" * 46)
+    , "  " + pad("Rooted"; 16) + pad("\($rooted) / \($total)"; 14) + pct($rooted; $total)
+    , "  " + pad("User flags"; 16) + pad("\($userd) / \($total)"; 14) + pct($userd; $total)
+    , "  " + pad("User only"; 16) + pad("\($partial)"; 14)
+    , "  " + pad("Points"; 16) + pad("\($points)"; 14)
+    , (if $has_cov then
+        "  " + pad("Written up"; 16) + pad("\($written) / \($rooted)"; 14) + pct($written; $rooted)
+      else empty end)
+    , (if $has_cov then
+        "  " + pad("Backlog"; 16) + pad("\($backlog)"; 14)
+      else empty end)
+    , ""
+    , "  By difficulty"
+    , "  " + ("─" * 46)
+    , ( ["Easy","Medium","Hard","Insane"][]
+        as $d
+        | ($m | map(select(.difficultyText == $d))) as $set
+        | ($set | length) as $n
+        | ($set | map(select(.rootOwned)) | length) as $r
+        | if $n > 0 then "  " + pad($d; 16) + pad("\($r) / \($n)"; 14) + pct($r; $n) else empty end )
+    , ""
+    , "  By OS"
+    , "  " + ("─" * 46)
+    , ( ($m | map(.os) | unique | map(select(. != "")))[]
+        as $o
+        | ($m | map(select(.os == $o))) as $set
+        | ($set | length) as $n
+        | ($set | map(select(.rootOwned)) | length) as $r
+        | "  " + pad($o; 16) + pad("\($r) / \($n)"; 14) + pct($r; $n) )
+    , ""
+    , "  Recently rooted"
+    , "  " + ("─" * 46)
+    , ( [ $m[] | select(.rootOwned) ]
+        | sort_by(.releaseDate // "") | reverse | .[0:5][]
+        | "  " + pad(.name; 22) + pad(.difficultyText; 10) + ((.releaseDate // "") | split("T")[0]) )
+  ' "$data"
+
+  if $has_cov; then
+    local orphans; orphans="$(jq -r '.unmatched_writeups | length' "$data")"
+    if (( orphans > 0 )); then
+      echo
+      warn "$orphans writeup slugs matched no machine: $(jq -r '.unmatched_writeups[:8] | join(", ")' "$data")"
+    fi
+  fi
+}
+
+cmd_coverage() {
+  need curl; need jq
+  local writeups="" covered_file="" out="" states="active,retired"
+  local url_tmpl="" owned_only=false
+
+  while (( $# )); do
+    case "$1" in
+      --writeups)     writeups="${2:-}"; shift 2 ;;
+      --covered)      covered_file="${2:-}"; shift 2 ;;
+      --out)          out="${2:-}"; shift 2 ;;
+      --state)        states="${2:-}"; shift 2 ;;
+      --url-template) url_tmpl="${2:-}"; shift 2 ;;
+      --owned-only)   owned_only=true; shift ;;
+      *)              die "unknown option: $1" ;;
+    esac
+  done
+
+  [[ -n "$writeups" && -n "$covered_file" ]] \
+    && die "--writeups and --covered are mutually exclusive"
+
+  # No writeup source is fine — you just get progress, without the
+  # covered/backlog split.
+  local covfile has_cov=false
+  covfile="$(mktemp)"
+  if [[ -n "$writeups" ]]; then
+    covered_slugs_from_dir "$writeups" | grep -v '^$' | sort -u > "$covfile"
+    has_cov=true
+  elif [[ -n "$covered_file" ]]; then
+    covered_slugs_from_file "$covered_file" | grep -v '^$' | sort -u > "$covfile"
+    has_cov=true
+  fi
+  $has_cov && log "$(grep -c . "$covfile" || true) covered slugs"
+
+  local machines; machines="$(mktemp)"
+  fetch_all_machines "$states" "$machines"
+  log "$(jq 'length' "$machines") machines from the API"
+
+  local data; data="$(mktemp)"
+
+  jq -n \
+    --slurpfile machines_wrap "$machines" \
+    --rawfile covered "$covfile" \
+    --arg url_tmpl "$url_tmpl" \
+    --argjson owned_only "$owned_only" \
+    --arg generated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    def slugify: ascii_downcase | gsub("[^a-z0-9]"; "");
+    ($machines_wrap[0] // []) as $machines
+    | ($covered | split("\n") | map(select(length > 0))) as $cov
+    | ($machines | map(
+        (.name | slugify) as $s
+        | .name as $nm
+        | (.id | tostring) as $idstr
+        | (.authUserInRootOwns // false) as $root
+        | (.authUserInUserOwns // false) as $user
+        | (if ($root or $user | not) then "untouched"
+           elif ($cov | index($s)) then "covered"
+           elif $root then "backlog"
+           else "partial" end) as $state
+        | {
+            id, name,
+            slug: $s,
+            os: (.os // ""),
+            difficultyText: (.difficultyText // ""),
+            points, rating, releaseDate, retiredDate,
+            userOwned: $user,
+            rootOwned: $root,
+            coverage: $state
+          }
+        | if $state == "covered" and ($url_tmpl | length) > 0
+          then . + { writeup_url: ($url_tmpl
+                       | gsub("\\{slug\\}"; $s)
+                       | gsub("\\{name\\}"; $nm)
+                       | gsub("\\{id\\}"; $idstr)) }
+          else . end
+      )) as $all
+    | ($all | sort_by(.releaseDate // "") | reverse) as $sorted
+    | (if $owned_only then ($sorted | map(select(.coverage != "untouched"))) else $sorted end) as $rows
+    | ($rows | map(select(.rootOwned))          | length) as $pwned
+    | ($rows | map(select(.coverage=="covered"))| length) as $written
+    | ($rows | map(select(.coverage=="backlog"))| length) as $back
+    | {
+        generated: $generated,
+        stats: {
+          "Pwned": $pwned,
+          "Written up": $written,
+          "Backlog": $back,
+          "Coverage": (if $pwned > 0 then ((100 * $written / $pwned) | round | tostring) + "%" else "0%" end)
+        },
+        machines: $rows,
+        unmatched_writeups: ($cov - ($all | map(.slug)) | sort)
+      }' > "$data"
+
+  # ---- terminal summary (always) -------------------------------------
+  print_progress "$data" "$has_cov"
+  rm -f "$machines" "$covfile"
+
+  # ---- files (only when --out is given) --------------------------------
+  if [[ -z "$out" ]]; then rm -f "$data"; return 0; fi
+  mkdir -p "$out"
+  cp "$data" "$out/coverage.json"
+  chmod 644 "$out/coverage.json"   # mktemp gives 0600; a site build needs to read it
+
+  # HTML partial, built from the JSON we just wrote.
+  {
+    printf '<style>\n'
+    coverage_css
+    printf '</style>\n'
+    jq -r '
+      def lbl: {covered:"Covered", backlog:"Backlog",
+                  partial:"User flag only", untouched:"Not started"}[.];
+      "<section class=\"htb-coverage\" aria-label=\"HackTheBox coverage\">",
+      "  <ul class=\"htb-coverage__stats\">"
+        + ([ .stats | to_entries[]
+             | "<li class=\"htb-coverage__stat\"><b>\(.value)</b><span>\(.key|@html)</span></li>" ]
+           | join(""))
+        + "</ul>",
+      "  <ul class=\"htb-coverage__legend\">"
+        + ([ "covered","backlog","partial","untouched"
+             | "<li><span class=\"htb-coverage__swatch htb-coverage__swatch--\(.)\"></span>\(.|lbl)</li>" ]
+           | join(""))
+        + "</ul>",
+      "  <ul class=\"htb-coverage__grid\">"
+        + ([ .machines[]
+             | "<li class=\"htb-tile htb-tile--\(.coverage)\" title=\"\("\(.name) — \(.difficultyText) \(.os) — \(.coverage|lbl)"|@html)\" data-machine=\"\(.name|@html)\">"
+               + (if .writeup_url
+                  then "<a href=\"\(.writeup_url|@html)\"><span class=\"visually-hidden\">\(.name|@html)</span></a>"
+                  else "" end)
+               + "</li>" ]
+           | join(""))
+        + "</ul>",
+      (if ([.machines[] | select(.coverage=="backlog")] | length) > 0
+       then "  <h3>Pwned, writeup pending</h3>",
+            "  <ul class=\"htb-coverage__backlog\">"
+              + ([ .machines[] | select(.coverage=="backlog") | "<li>\(.name|@html)</li>" ] | join(""))
+              + "</ul>"
+       else empty end),
+      "  <p class=\"htb-coverage__updated\"><small>Updated \(.generated | split("T")[0])</small></p>",
+      "</section>"
+    ' "$out/coverage.json"
+  } > "$out/coverage.html"
+
+  rm -f "$data"
+  ok "wrote $out/coverage.json and $out/coverage.html"
+}
+
+
+# ================================================================== cli
+
+usage() {
+  sed -n '2,16p' "$(readlink -f "${BASH_SOURCE[0]}")" | sed 's/^# \{0,1\}//'
+}
+
+main() {
+  local cmd="${1:-}"
+  [[ -n "$cmd" ]] && shift || true
+  case "$cmd" in
+    start)       cmd_start "$@" ;;
+    stop)        cmd_stop "$@" ;;
+    connect)     need jq; vpn_connect ;;
+    disconnect)  vpn_disconnect ;;
+    flag)        cmd_flag "$@" ;;
+    coverage)    cmd_coverage "$@" ;;
+    ""|-h|--help|help) usage ;;
+    *)  printf 'unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 1 ;;
+  esac
+}
+
+main "$@"

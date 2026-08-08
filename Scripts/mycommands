@@ -8,7 +8,7 @@ GENERAL UTILITIES
 -----------------
   tmuxlogger <IP>
     Just a simple logger with tmux pipe under the hood
-
+  Fuzzing 
   upcreds <file>
     Parse and organize credentials from a file
 
